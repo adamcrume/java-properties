@@ -1,3 +1,5 @@
+//! This is all based on https://docs.oracle.com/javase/7/docs/api/java/util/Properties.html.
+
 extern crate encoding;
 extern crate regex;
 
