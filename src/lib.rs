@@ -179,6 +179,14 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
 
 /////////////////////
 
+#[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
+enum ParsedLine<'a> {
+  Comment(&'a str),
+  KVPair(&'a str, &'a str),
+}
+
+/////////////////////
+
 // Note that this is not the same as char.is_whitespace.  This is correct.
 fn is_whitespace(c: char) -> bool {
   match c {
@@ -187,11 +195,11 @@ fn is_whitespace(c: char) -> bool {
   }
 }
 
-struct LineSplitter {
+struct LineParser {
   re: Regex,
 }
 
-impl LineSplitter {
+impl LineParser {
   fn new() -> Self {
     // Note that we have to use \x20 to match a space since we're ignoring whitespace
     let re_str = r"(?x) # allow whitespace and comments
@@ -202,19 +210,25 @@ impl LineSplitter {
         [\x20\t\r\n\x0c]+ # try matching whitespace only
       )
     ";
-    LineSplitter {
+    LineParser {
       re: Regex::new(re_str).unwrap(),
     }
   }
 
-  fn split_line<'a>(&self, line: &'a str) -> (&'a str, &'a str) {
+  fn parse_line<'a>(&self, line: &'a str) -> Option<ParsedLine<'a>> {
     let line = trim_unescaped_whitespace(line);
+    if line.is_empty() {
+      return None;
+    }
+    if line.starts_with("#") || line.starts_with("!") {
+      return Some(ParsedLine::Comment(trim_unescaped_whitespace(&line[1..])));
+    }
     match self.re.captures(line) {
       Some(c) => {
         let (start, end) = c.pos(1).unwrap();
-        (&line[..start], &line[end..])
+        Some(ParsedLine::KVPair(&line[..start], &line[end..]))
       },
-      None => (line, ""),
+      None => Some(ParsedLine::KVPair(line, "")),
     }
   }
 }
@@ -280,6 +294,7 @@ mod tests {
   use super::LogicalLines;
   use super::NaturalLine;
   use super::NaturalLines;
+  use super::ParsedLine;
 
   const SP: u8 = 32; // space
 
@@ -377,30 +392,36 @@ mod tests {
   }
 
   #[test]
-  fn split_line() {
+  fn parse_line() {
     let data = [
-      ("a", "a", ""),
-      ("a = b", "a", "b"),
-      ("a : b", "a", "b"),
-      ("a b", "a", "b"),
-      (" a = b", "a", "b"),
-      (" a : b", "a", "b"),
-      (" a b", "a", "b"),
-      ("a:=b", "a", "=b"),
-      ("a=:b", "a", ":b"),
-      ("a b:c", "a", "b:c"),
-      ("a\\ \\:\\=b c", "a\\ \\:\\=b", "c"),
-      ("a\\ \\:\\=b=c", "a\\ \\:\\=b", "c"),
-      ("a\\\\ \\\\:\\\\=b c", "a\\\\", "\\\\:\\\\=b c"),
-      ("\\  b", "\\ ", "b"),
-      ("=", "", ""),
-      ("\u{1F41E}=\u{1F41E}", "\u{1F41E}", "\u{1F41E}"),
+      ("", None),
+      (" ", None),
+      ("\\ ", Some(ParsedLine::KVPair("\\ ", ""))),
+      ("# foo", Some(ParsedLine::Comment("foo"))),
+      (" # foo", Some(ParsedLine::Comment("foo"))),
+      ("a # foo", Some(ParsedLine::KVPair("a", "# foo"))),
+      ("a", Some(ParsedLine::KVPair("a", ""))),
+      ("a = b", Some(ParsedLine::KVPair("a", "b"))),
+      ("a : b", Some(ParsedLine::KVPair("a", "b"))),
+      ("a b", Some(ParsedLine::KVPair("a", "b"))),
+      (" a = b", Some(ParsedLine::KVPair("a", "b"))),
+      (" a : b", Some(ParsedLine::KVPair("a", "b"))),
+      (" a b", Some(ParsedLine::KVPair("a", "b"))),
+      ("a:=b", Some(ParsedLine::KVPair("a", "=b"))),
+      ("a=:b", Some(ParsedLine::KVPair("a", ":b"))),
+      ("a b:c", Some(ParsedLine::KVPair("a", "b:c"))),
+      ("a\\ \\:\\=b c", Some(ParsedLine::KVPair("a\\ \\:\\=b", "c"))),
+      ("a\\ \\:\\=b=c", Some(ParsedLine::KVPair("a\\ \\:\\=b", "c"))),
+      ("a\\\\ \\\\:\\\\=b c", Some(ParsedLine::KVPair("a\\\\", "\\\\:\\\\=b c"))),
+      ("\\  b", Some(ParsedLine::KVPair("\\ ", "b"))),
+      ("=", Some(ParsedLine::KVPair("", ""))),
+      ("\u{1F41E}=\u{1F41E}", Some(ParsedLine::KVPair("\u{1F41E}", "\u{1F41E}"))),
     ];
-    let splitter = super::LineSplitter::new();
-    for &(line, key, value) in data.iter() {
-      let (k, v) = splitter.split_line(line);
-      if (key, value) != (k, v) {
-        panic!("Failed when splitting {:?}.  Expected {:?} and {:?}, but got {:?} and {:?}", line, key, value, k, v);
+    let splitter = super::LineParser::new();
+    for &(line, ref expected) in data.iter() {
+      let actual = splitter.parse_line(line);
+      if expected != &actual {
+        panic!("Failed when splitting {:?}.  Expected {:?} but got {:?}", line, expected, actual);
       }
     }
   }
