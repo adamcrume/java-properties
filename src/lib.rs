@@ -112,7 +112,6 @@ impl< R: Read> Iterator for NaturalLines<R> {
 #[derive(PartialEq,Eq,Debug)]
 struct LogicalLine(String);
 
-// We can't use BufRead.lines() because it doesn't use the proper line endings
 struct LogicalLines<I: Iterator<Item=io::Result<NaturalLine>>> {
   physical_lines: I,
   eof: bool,
