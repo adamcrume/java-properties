@@ -117,6 +117,7 @@ struct LogicalLine(String);
 struct LogicalLines<I: Iterator<Item=io::Result<NaturalLine>>> {
   physical_lines: I,
   eof: bool,
+  comment_re: Regex,
 }
 
 impl<I: Iterator<Item=io::Result<NaturalLine>>> LogicalLines<I> {
@@ -124,6 +125,7 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> LogicalLines<I> {
     LogicalLines {
       physical_lines: physical_lines,
       eof: false,
+      comment_re: Regex::new("^[ \t\r\n\x0c]*[#!]").unwrap(),
     }
   }
 }
@@ -161,6 +163,12 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
               line.trim_left()
             }
           );
+          if first && self.comment_re.is_match(&line) {
+            // This format is terrible.  We can't throw out comment lines before joining natural lines, because "a\\\n#b" should be joined into "a#b".
+            // On the other hand, we can't join natural lines before processing comments, because "#a\\\nb" should stay as two lines, "#a\\" and "b".
+            // Processing line joins and comments are inextricably linked.
+            return Some(Ok(LogicalLine(buf)));
+          }
           if count_ending_backslashes(&line) % 2 == 1 {
             buf.pop();
           } else {
@@ -329,6 +337,8 @@ mod tests {
       (vec!["foo\\\\", "bar"], vec!["foo\\\\", "bar"]),
       (vec!["foo\\\\\\", "bar"], vec!["foo\\\\bar"]),
       (vec!["foo\\", " bar"], vec!["foobar"]),
+      (vec!["#foo\\", " bar"], vec!["#foo\\", " bar"]),
+      (vec!["foo\\", "# bar"], vec!["foo# bar"]),
       (vec!["\u{1F41E}\\", "\u{1F41E}"], vec!["\u{1F41E}\u{1F41E}"]),
       (vec!["\u{1F41E}\\", " \u{1F41E}"], vec!["\u{1F41E}\u{1F41E}"]),
     ];
