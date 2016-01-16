@@ -201,14 +201,33 @@ struct LineParser {
 
 impl LineParser {
   fn new() -> Self {
-    // Note that we have to use \x20 to match a space since we're ignoring whitespace
+    // Note that we have to use \x20 to match a space and \x23 to match a pound character since we're ignoring whitespace and comments
     let re_str = r"(?x) # allow whitespace and comments
-      (?:^|[^\\])(?:\\\\)* # ignore an even number of preceding backslashes
-      (
-        [\x20\t\r\n\x0c]*[:=][\x20\t\r\n\x0c]* # try matching an actual separator (: or =)
+      ^
+      [\x20\t\r\n\x0c]* # ignorable whitespace
+      (?:
+        [\x23!] # start of comment (# or !)
+        [\x20\t\r\n\x0c]* # ignorable whitespace
+        (.*?) # comment text
+      |
+        ((?:[^\\:=\x20\t\r\n\x0c]|\\.)*) # key
+        (?:
+          [\x20\t\r\n\x0c]*[:=][\x20\t\r\n\x0c]* # try matching an actual separator (: or =)
         |
-        [\x20\t\r\n\x0c]+ # try matching whitespace only
+          [\x20\t\r\n\x0c]+ # try matching whitespace only
+        )
+        (
+          (?:[^\\]|\\.)*? # value
+          (?:\\$)? # end of line backslash, can't show up in real input because it's caught by LogicalLines
+        )
+      |
+        (
+          (?:[^\\:=\x20\t\r\n\x0c]|\\.)* # key with no value
+          (?:\\$)? # end of line backslash, can't show up in real input because it's caught by LogicalLines
+        )
       )
+      [\x20\t\r\n\x0c]* # ignorable whitespace
+      $
     ";
     LineParser {
       re: Regex::new(re_str).unwrap(),
@@ -216,60 +235,27 @@ impl LineParser {
   }
 
   fn parse_line<'a>(&self, line: &'a str) -> Option<ParsedLine<'a>> {
-    let line = trim_unescaped_whitespace(line);
-    if line.is_empty() {
-      return None;
-    }
-    if line.starts_with("#") || line.starts_with("!") {
-      return Some(ParsedLine::Comment(trim_unescaped_whitespace(&line[1..])));
-    }
     match self.re.captures(line) {
       Some(c) => {
-        let (start, end) = c.pos(1).unwrap();
-        Some(ParsedLine::KVPair(&line[..start], &line[end..]))
-      },
-      None => Some(ParsedLine::KVPair(line, "")),
-    }
-  }
-}
-
-fn trim_unescaped_whitespace(s: &str) -> &str {
-  fn ltrim(s: &str) -> &str {
-    for (i, c) in s.char_indices() {
-      if !is_whitespace(c) {
-        return &s[i..];
-      }
-    }
-    "" // all whitespace
-  }
-
-  fn rtrim(s: &str) -> &str {
-    let mut ix = 0; // index of first whitespace character after last non-whitespace character
-    let mut escaped = false;
-    let mut last_was_non_whitespace = true;
-    for (i, c) in s.char_indices() {
-      if escaped {
-        escaped = false;
-        last_was_non_whitespace = true;
-      } else if c == '\\' {
-        escaped = true;
-      } else if is_whitespace(c) {
-        if last_was_non_whitespace {
-          ix = i;
+        if let Some((start, end)) = c.pos(1) {
+          Some(ParsedLine::Comment(&line[start..end]))
+        } else if let Some((kstart, kend)) = c.pos(2) {
+          let (vstart, vend) = c.pos(3).unwrap(); // key and value either both match or both fail, and the key matched
+          Some(ParsedLine::KVPair(&line[kstart..kend], &line[vstart..vend]))
+        } else if let Some((start, end)) = c.pos(4) {
+          let key = &line[start..end];
+          if key == "" {
+            None
+          } else {
+            Some(ParsedLine::KVPair(key, ""))
+          }
+        } else {
+          panic!("Failed to get any groups out of the regular expression.")
         }
-        last_was_non_whitespace = false;
-      } else {
-        last_was_non_whitespace = true;
-      }
-    }
-    if last_was_non_whitespace {
-      s
-    } else {
-      &s[..ix]
+      },
+      None => panic!("Failed to match on {:?}", line), // This should never happen.  The pattern should match all strings.
     }
   }
-
-  ltrim(rtrim(s))
 }
 
 pub fn load(reader: &mut BufRead) -> Result<HashMap<String, String>, PropertiesError> {
@@ -422,25 +408,6 @@ mod tests {
       let actual = splitter.parse_line(line);
       if expected != &actual {
         panic!("Failed when splitting {:?}.  Expected {:?} but got {:?}", line, expected, actual);
-      }
-    }
-  }
-
-  #[test]
-  fn trim_unescaped_whitespace() {
-    let data = [
-      ("", ""),
-      (" ", ""),
-      ("x", "x"),
-      (" x x ", "x x"),
-      ("  xx  xx  ", "xx  xx"),
-      (" \\  ", "\\ "),
-      (" \u{1F41E} \u{1F41E} ", "\u{1F41E} \u{1F41E}"),
-    ];
-    for &(raw, trimmed) in data.iter() {
-      let t = super::trim_unescaped_whitespace(raw);
-      if trimmed != t {
-        panic!("Failed when trimming {:?}.  Expected {:?} but got {:?}", raw, trimmed, t);
       }
     }
   }
