@@ -333,6 +333,8 @@ mod tests {
       (vec!["foo\\\\", "bar"], vec!["foo\\\\", "bar"]),
       (vec!["foo\\\\\\", "bar"], vec!["foo\\\\bar"]),
       (vec!["foo\\", " bar"], vec!["foobar"]),
+      (vec!["\u{1F41E}\\", "\u{1F41E}"], vec!["\u{1F41E}\u{1F41E}"]),
+      (vec!["\u{1F41E}\\", " \u{1F41E}"], vec!["\u{1F41E}\u{1F41E}"]),
     ];
     for &(ref input_lines, ref lines) in data.iter() {
       let mut iter = LogicalLines::new(input_lines.iter().map(|x| Ok(NaturalLine(x.to_string()))));
@@ -371,6 +373,11 @@ mod tests {
     assert_eq!(1, super::count_ending_backslashes("\\x\\"));
     assert_eq!(2, super::count_ending_backslashes("x\\\\"));
     assert_eq!(3, super::count_ending_backslashes("\\\\\\"));
+
+    assert_eq!(0, super::count_ending_backslashes("x\u{1F41E}"));
+    assert_eq!(0, super::count_ending_backslashes("\\\u{1F41E}"));
+    assert_eq!(0, super::count_ending_backslashes("\u{1F41E}x"));
+    assert_eq!(1, super::count_ending_backslashes("\u{1F41E}\\"));
   }
 
   #[test]
@@ -388,6 +395,7 @@ mod tests {
       ("a\\ \\:\\=b c", "a\\ \\:\\=b", "c"),
       ("a\\ \\:\\=b=c", "a\\ \\:\\=b", "c"),
       ("\\  b", "\\ ", "b"),
+      ("\u{1F41E}=\u{1F41E}", "\u{1F41E}", "\u{1F41E}"),
     ];
     for &(line, key, value) in data.iter() {
       let (k, v) = super::split_line(line);
