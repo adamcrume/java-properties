@@ -175,6 +175,48 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
 
 /////////////////////
 
+// This only splits the line and does not trim whitespace or evaluate escape sequences.
+fn split_line(line: &str) -> (&str, &str) {
+  // This code is complicated because the format is ridiculously and unnecessarily complicated.
+  // We can't just split on the first colon, equal sign, or whitespace because we don't want to split "a = b" into "a" and "= b".
+  // Therefore, we first try splitting by ":" or "=", then by whitespace.
+
+  // Try splitting by ":" or "="
+  let mut escaped = false;
+  for (i, c) in line.char_indices() {
+    if escaped {
+      escaped = false;
+    } else if c == '\\' {
+      escaped = true;
+    } else if c == ':' || c == '=' {
+      return (&line[..i], &line[(i + 1)..]);
+    }
+  }
+
+  // Try splitting by whitespace
+  let mut escaped = false;
+  let mut found_non_whitespace = false;
+  for (i, c) in line.char_indices() {
+    if escaped {
+      escaped = false;
+    } else if c == '\\' {
+      escaped = true;
+      found_non_whitespace = true;
+    } else if c == ' ' || c == '\t' || c == '\x0C' {
+      // These and line terminators are the only whitespace characters according to the documentation.
+      // There should be no line terminators at this point, because those were removed when iterating over lines.
+      if found_non_whitespace {
+        return (&line[..i], &line[(i + 1)..]);
+      }
+    } else {
+      found_non_whitespace = true;
+    }
+  }
+
+  // If there is no separator, the whole line is the key, and the empty string is the value.
+  (line, "")
+}
+
 pub fn load(reader: &mut BufRead) -> Result<HashMap<String, String>, PropertiesError> {
   let map = HashMap::new();
   let mut lines = LogicalLines::new(NaturalLines::new(reader));
@@ -284,5 +326,29 @@ mod tests {
     assert_eq!(1, super::count_ending_backslashes("\\x\\"));
     assert_eq!(2, super::count_ending_backslashes("x\\\\"));
     assert_eq!(3, super::count_ending_backslashes("\\\\\\"));
+  }
+
+  #[test]
+  fn split_line() {
+    let data = [
+      ("a", "a", ""),
+      ("a = b", "a ", " b"),
+      ("a : b", "a ", " b"),
+      ("a b", "a", "b"),
+      (" a = b", " a ", " b"),
+      (" a : b", " a ", " b"),
+      (" a b", " a", "b"),
+      ("a:=b", "a", "=b"),
+      ("a=:b", "a", ":b"),
+      ("a\\ \\:\\=b c", "a\\ \\:\\=b", "c"),
+      ("a\\ \\:\\=b=c", "a\\ \\:\\=b", "c"),
+      ("\\  b", "\\ ", "b"),
+    ];
+    for &(line, key, value) in data.iter() {
+      let (k, v) = super::split_line(line);
+      if (key, value) != (k, v) {
+        panic!("Failed when splitting {:?}.  Expected {:?} and {:?}, but got {:?} and {:?}", line, key, value, k, v);
+      }
+    }
   }
 }
