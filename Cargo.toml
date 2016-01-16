@@ -5,3 +5,4 @@ authors = ["Adam Crume <adamcrume@gmail.com>"]
 
 [dependencies]
 encoding = "0.2.32"
+regex = "0.1.47"

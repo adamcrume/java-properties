@@ -1,8 +1,10 @@
 extern crate encoding;
+extern crate regex;
 
 use encoding::Encoding;
 use encoding::DecoderTrap;
 use encoding::all::ISO_8859_1;
+use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -183,44 +185,36 @@ fn is_whitespace(c: char) -> bool {
   }
 }
 
-// This only splits the line and does not trim whitespace or evaluate escape sequences.
-fn split_line(line: &str) -> (&str, &str) {
-  // This code is complicated because the format is ridiculously and unnecessarily complicated.
-  // We can't just split on the first colon, equal sign, or whitespace because we don't want to split "a = b" into "a" and "= b".
-  // Therefore, we first try splitting by ":" or "=", then by whitespace.
+struct LineSplitter {
+  re: Regex,
+}
 
-  // Try splitting by ":" or "="
-  let mut escaped = false;
-  for (i, c) in line.char_indices() {
-    if escaped {
-      escaped = false;
-    } else if c == '\\' {
-      escaped = true;
-    } else if c == ':' || c == '=' {
-      return (&line[..i], &line[(i + 1)..]);
+impl LineSplitter {
+  fn new() -> Self {
+    // Note that we have to use \x20 to match a space since we're ignoring whitespace
+    let re_str = r"(?x) # allow whitespace and comments
+      (?:^|[^\\])(?:\\\\)* # ignore an even number of preceding backslashes
+      (
+        [\x20\t\r\n\x0c]*[:=][\x20\t\r\n\x0c]* # try matching an actual separator (: or =)
+        |
+        [\x20\t\r\n\x0c]+ # try matching whitespace only
+      )
+    ";
+    LineSplitter {
+      re: Regex::new(re_str).unwrap(),
     }
   }
 
-  // Try splitting by whitespace
-  let mut escaped = false;
-  let mut found_non_whitespace = false;
-  for (i, c) in line.char_indices() {
-    if escaped {
-      escaped = false;
-    } else if c == '\\' {
-      escaped = true;
-      found_non_whitespace = true;
-    } else if is_whitespace(c) {
-      if found_non_whitespace {
-        return (&line[..i], &line[(i + 1)..]);
-      }
-    } else {
-      found_non_whitespace = true;
+  fn split_line<'a>(&self, line: &'a str) -> (&'a str, &'a str) {
+    let line = trim_unescaped_whitespace(line);
+    match self.re.captures(line) {
+      Some(c) => {
+        let (start, end) = c.pos(1).unwrap();
+        (&line[..start], &line[end..])
+      },
+      None => (line, ""),
     }
   }
-
-  // If there is no separator, the whole line is the key, and the empty string is the value.
-  (line, "")
 }
 
 fn trim_unescaped_whitespace(s: &str) -> &str {
@@ -384,21 +378,25 @@ mod tests {
   fn split_line() {
     let data = [
       ("a", "a", ""),
-      ("a = b", "a ", " b"),
-      ("a : b", "a ", " b"),
+      ("a = b", "a", "b"),
+      ("a : b", "a", "b"),
       ("a b", "a", "b"),
-      (" a = b", " a ", " b"),
-      (" a : b", " a ", " b"),
-      (" a b", " a", "b"),
+      (" a = b", "a", "b"),
+      (" a : b", "a", "b"),
+      (" a b", "a", "b"),
       ("a:=b", "a", "=b"),
       ("a=:b", "a", ":b"),
+      ("a b:c", "a", "b:c"),
       ("a\\ \\:\\=b c", "a\\ \\:\\=b", "c"),
       ("a\\ \\:\\=b=c", "a\\ \\:\\=b", "c"),
+      ("a\\\\ \\\\:\\\\=b c", "a\\\\", "\\\\:\\\\=b c"),
       ("\\  b", "\\ ", "b"),
+      ("=", "", ""),
       ("\u{1F41E}=\u{1F41E}", "\u{1F41E}", "\u{1F41E}"),
     ];
+    let splitter = super::LineSplitter::new();
     for &(line, key, value) in data.iter() {
-      let (k, v) = super::split_line(line);
+      let (k, v) = splitter.split_line(line);
       if (key, value) != (k, v) {
         panic!("Failed when splitting {:?}.  Expected {:?} and {:?}, but got {:?} and {:?}", line, key, value, k, v);
       }
