@@ -3,7 +3,6 @@ extern crate encoding;
 use encoding::Encoding;
 use encoding::DecoderTrap;
 use encoding::all::ISO_8859_1;
-use encoding::types::RawDecoder;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -13,7 +12,6 @@ use std::io;
 use std::io::BufRead;
 use std::io::Bytes;
 use std::io::ErrorKind;
-use std::io::Lines;
 use std::io::Read;
 use std::iter::Peekable;
 
@@ -92,7 +90,7 @@ impl< R: Read> Iterator for NaturalLines<R> {
               LF => return Some(Ok(NaturalLine(buf))),
               _ => match ISO_8859_1.decode(&[b], DecoderTrap::Strict) {
                 Ok(s) => buf.push_str(&s),
-                Err(e) => return Some(Err(io::Error::new(ErrorKind::InvalidData, "Error reading ISO-8859-1 encoding"))),
+                Err(_) => return Some(Err(io::Error::new(ErrorKind::InvalidData, "Error reading ISO-8859-1 encoding"))),
               },
             };
           },
@@ -150,7 +148,7 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
     loop {
       match self.physical_lines.next() {
         Some(Err(e)) => return Some(Err(e)),
-        Some(Ok(NaturalLine(mut line))) => {
+        Some(Ok(NaturalLine(line))) => {
           buf.push_str(&line);
           if count_ending_backslashes(&line) % 2 == 1 {
             buf.pop();
@@ -185,10 +183,6 @@ pub fn load(reader: &mut BufRead) -> Result<HashMap<String, String>, PropertiesE
 
 #[cfg(test)]
 mod tests {
-  use std::io;
-  use std::io::BufRead;
-  use std::io::BufReader;
-  use std::io::Read;
   use super::CR;
   use super::LF;
   use super::LogicalLine;
@@ -196,7 +190,6 @@ mod tests {
   use super::NaturalLine;
   use super::NaturalLines;
 
-  const BS: u8 = 92; // backslash
   const SP: u8 = 32; // space
 
   #[test]
@@ -246,8 +239,6 @@ mod tests {
       (vec!["foo\\\\\\", "bar"], vec!["foo\\\\bar"]),
     ];
     for &(ref input_lines, ref lines) in data.iter() {
-      let input_natural_lines: Vec<io::Result<NaturalLine>> =
-            input_lines.iter().map(|x| Ok(NaturalLine(x.to_string()))).collect();
       let mut iter = LogicalLines::new(input_lines.iter().map(|x| Ok(NaturalLine(x.to_string()))));
       for line in lines {
         match (line.to_string(), iter.next()) {
