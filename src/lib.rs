@@ -195,14 +195,6 @@ enum ParsedLine<'a> {
 
 /////////////////////
 
-// Note that this is not the same as char.is_whitespace.  This is correct.
-fn is_whitespace(c: char) -> bool {
-  match c {
-    ' ' | '\t' | '\x0C' | '\n' | '\r' => true,
-    _ => false,
-  }
-}
-
 struct LineParser {
   re: Regex,
 }
