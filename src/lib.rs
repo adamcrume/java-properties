@@ -145,11 +145,18 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
       return None;
     }
     let mut buf = String::new();
+    let mut first = true;
     loop {
       match self.physical_lines.next() {
         Some(Err(e)) => return Some(Err(e)),
         Some(Ok(NaturalLine(line))) => {
-          buf.push_str(&line);
+          buf.push_str(
+            if first {
+              &line
+            } else {
+              line.trim_left()
+            }
+          );
           if count_ending_backslashes(&line) % 2 == 1 {
             buf.pop();
           } else {
@@ -161,6 +168,7 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
           return None;
         },
       }
+      first = false;
     }
   }
 }
@@ -237,6 +245,7 @@ mod tests {
       (vec!["foo\\", "bar"], vec!["foobar"]),
       (vec!["foo\\\\", "bar"], vec!["foo\\\\", "bar"]),
       (vec!["foo\\\\\\", "bar"], vec!["foo\\\\bar"]),
+      (vec!["foo\\", " bar"], vec!["foobar"]),
     ];
     for &(ref input_lines, ref lines) in data.iter() {
       let mut iter = LogicalLines::new(input_lines.iter().map(|x| Ok(NaturalLine(x.to_string()))));
