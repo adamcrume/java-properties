@@ -210,21 +210,21 @@ impl LineParser {
         [\x20\t\r\n\x0c]* # ignorable whitespace
         (.*?) # comment text
       |
-        ((?:[^\\:=\x20\t\r\n\x0c]|\\.)*) # key
+        (
+          (?:[^\\:=\x20\t\r\n\x0c]|\\.)* # key
+          (?:\\$)? # end of line backslash, can't show up in real input because it's caught by LogicalLines
+        )
         (?:
-          [\x20\t\r\n\x0c]*[:=][\x20\t\r\n\x0c]* # try matching an actual separator (: or =)
-        |
-          [\x20\t\r\n\x0c]+ # try matching whitespace only
-        )
-        (
-          (?:[^\\]|\\.)*? # value
-          (?:\\$)? # end of line backslash, can't show up in real input because it's caught by LogicalLines
-        )
-      |
-        (
-          (?:[^\\:=\x20\t\r\n\x0c]|\\.)* # key with no value
-          (?:\\$)? # end of line backslash, can't show up in real input because it's caught by LogicalLines
-        )
+          (?:
+            [\x20\t\r\n\x0c]*[:=][\x20\t\r\n\x0c]* # try matching an actual separator (: or =)
+          |
+            [\x20\t\r\n\x0c]+ # try matching whitespace only
+          )
+          (
+            (?:[^\\]|\\.)*? # value
+            (?:\\$)? # end of line backslash, can't show up in real input because it's caught by LogicalLines
+          )
+        )?
       )
       [\x20\t\r\n\x0c]* # ignorable whitespace
       $
@@ -235,25 +235,24 @@ impl LineParser {
   }
 
   fn parse_line<'a>(&self, line: &'a str) -> Option<ParsedLine<'a>> {
-    match self.re.captures(line) {
-      Some(c) => {
-        if let Some((start, end)) = c.pos(1) {
-          Some(ParsedLine::Comment(&line[start..end]))
-        } else if let Some((kstart, kend)) = c.pos(2) {
-          let (vstart, vend) = c.pos(3).unwrap(); // key and value either both match or both fail, and the key matched
-          Some(ParsedLine::KVPair(&line[kstart..kend], &line[vstart..vend]))
-        } else if let Some((start, end)) = c.pos(4) {
-          let key = &line[start..end];
-          if key == "" {
-            None
-          } else {
-            Some(ParsedLine::KVPair(key, ""))
-          }
+    if let Some(c) = self.re.captures(line) {
+      if let Some((start, end)) = c.pos(1) {
+        Some(ParsedLine::Comment(&line[start..end]))
+      } else if let Some((kstart, kend)) = c.pos(2) {
+        let key = &line[kstart..kend];
+        if let Some((vstart, vend)) = c.pos(3) {
+          Some(ParsedLine::KVPair(key, &line[vstart..vend]))
+        } else if key != "" {
+          Some(ParsedLine::KVPair(key, ""))
         } else {
-          panic!("Failed to get any groups out of the regular expression.")
+          None
         }
-      },
-      None => panic!("Failed to match on {:?}", line), // This should never happen.  The pattern should match all strings.
+      } else {
+        panic!("Failed to get any groups out of the regular expression.")
+      }
+    } else {
+      // This should never happen.  The pattern should match all strings.
+      panic!("Failed to match on {:?}", line);
     }
   }
 }
@@ -382,6 +381,8 @@ mod tests {
     let data = [
       ("", None),
       (" ", None),
+      ("\\", Some(ParsedLine::KVPair("\\", ""))),
+      ("a=\\", Some(ParsedLine::KVPair("a", "\\"))),
       ("\\ ", Some(ParsedLine::KVPair("\\ ", ""))),
       ("# foo", Some(ParsedLine::Comment("foo"))),
       (" # foo", Some(ParsedLine::Comment("foo"))),
