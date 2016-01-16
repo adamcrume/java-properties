@@ -175,6 +175,14 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
 
 /////////////////////
 
+// Note that this is not the same as char.is_whitespace.  This is correct.
+fn is_whitespace(c: char) -> bool {
+  match c {
+    ' ' | '\t' | '\x0C' | '\n' | '\r' => true,
+    _ => false,
+  }
+}
+
 // This only splits the line and does not trim whitespace or evaluate escape sequences.
 fn split_line(line: &str) -> (&str, &str) {
   // This code is complicated because the format is ridiculously and unnecessarily complicated.
@@ -202,9 +210,7 @@ fn split_line(line: &str) -> (&str, &str) {
     } else if c == '\\' {
       escaped = true;
       found_non_whitespace = true;
-    } else if c == ' ' || c == '\t' || c == '\x0C' {
-      // These and line terminators are the only whitespace characters according to the documentation.
-      // There should be no line terminators at this point, because those were removed when iterating over lines.
+    } else if is_whitespace(c) {
       if found_non_whitespace {
         return (&line[..i], &line[(i + 1)..]);
       }
@@ -215,6 +221,45 @@ fn split_line(line: &str) -> (&str, &str) {
 
   // If there is no separator, the whole line is the key, and the empty string is the value.
   (line, "")
+}
+
+fn trim_unescaped_whitespace(s: &str) -> &str {
+  fn ltrim(s: &str) -> &str {
+    for (i, c) in s.char_indices() {
+      if !is_whitespace(c) {
+        return &s[i..];
+      }
+    }
+    "" // all whitespace
+  }
+
+  fn rtrim(s: &str) -> &str {
+    let mut ix = 0; // index of first whitespace character after last non-whitespace character
+    let mut escaped = false;
+    let mut last_was_non_whitespace = true;
+    for (i, c) in s.char_indices() {
+      if escaped {
+        escaped = false;
+        last_was_non_whitespace = true;
+      } else if c == '\\' {
+        escaped = true;
+      } else if is_whitespace(c) {
+        if last_was_non_whitespace {
+          ix = i;
+        }
+        last_was_non_whitespace = false;
+      } else {
+        last_was_non_whitespace = true;
+      }
+    }
+    if last_was_non_whitespace {
+      s
+    } else {
+      &s[..ix]
+    }
+  }
+
+  ltrim(rtrim(s))
 }
 
 pub fn load(reader: &mut BufRead) -> Result<HashMap<String, String>, PropertiesError> {
@@ -348,6 +393,25 @@ mod tests {
       let (k, v) = super::split_line(line);
       if (key, value) != (k, v) {
         panic!("Failed when splitting {:?}.  Expected {:?} and {:?}, but got {:?} and {:?}", line, key, value, k, v);
+      }
+    }
+  }
+
+  #[test]
+  fn trim_unescaped_whitespace() {
+    let data = [
+      ("", ""),
+      (" ", ""),
+      ("x", "x"),
+      (" x x ", "x x"),
+      ("  xx  xx  ", "xx  xx"),
+      (" \\  ", "\\ "),
+      (" \u{1F41E} \u{1F41E} ", "\u{1F41E} \u{1F41E}"),
+    ];
+    for &(raw, trimmed) in data.iter() {
+      let t = super::trim_unescaped_whitespace(raw);
+      if trimmed != t {
+        panic!("Failed when trimming {:?}.  Expected {:?} but got {:?}", raw, trimmed, t);
       }
     }
   }
