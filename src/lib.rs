@@ -392,6 +392,18 @@ impl<R: Read> PropertiesIter<R> {
       parser: LineParser::new(),
     }
   }
+
+  pub fn read_into<F: FnMut(String, String)>(&mut self, mut f: F) -> Result<(), PropertiesError> {
+    for line in self {
+      match try!(line).data {
+        LineContent::KVPair(key, value) => {
+           f(key, value);
+        },
+        LineContent::Comment(_) => (),
+      }
+    }
+    Ok(())
+  }
 }
 
 impl<R: Read> Iterator for PropertiesIter<R> {
