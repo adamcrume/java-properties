@@ -239,6 +239,10 @@ impl Line {
     &self.data
   }
 
+  pub fn consume_content(self) -> LineContent {
+    self.data
+  }
+
   fn mk_pair(line_no: usize, key: String, value: String) -> Line {
     Line {
       line_number: line_no,
