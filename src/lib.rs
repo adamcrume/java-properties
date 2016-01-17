@@ -3,8 +3,11 @@
 extern crate encoding;
 extern crate regex;
 
+use encoding::ByteWriter;
+use encoding::EncoderTrap;
 use encoding::Encoding;
 use encoding::DecoderTrap;
+use encoding::RawEncoder;
 use encoding::all::ISO_8859_1;
 use regex::Regex;
 use std::error::Error;
@@ -16,6 +19,7 @@ use std::io::BufRead;
 use std::io::Bytes;
 use std::io::ErrorKind;
 use std::io::Read;
+use std::io::Write;
 use std::iter::Peekable;
 
 /////////////////////
@@ -392,8 +396,12 @@ impl<R: Read> Iterator for PropertiesIter<R> {
             Some(parsed_line) => {
               match parsed_line {
                 ParsedLine::Comment(c) => {
-                  let line = Line::mk_comment(line_no, c.to_string());
-                  return Some(Ok(line)); // Do we need to unescape comments?  This is beyond the scope of the spec.
+                  let comment = match unescape(c) {
+                    Ok(x) => x,
+                    Err(e) => return Some(Err(e)),
+                  };
+                  let line = Line::mk_comment(line_no, comment);
+                  return Some(Ok(line));
                 },
                 ParsedLine::KVPair(k, v) => {
                   let key = match unescape(k) {
@@ -421,8 +429,85 @@ impl<R: Read> Iterator for PropertiesIter<R> {
 
 /////////////////////
 
+macro_rules! try_io {
+  ($e:expr) => {
+    match $e {
+      Ok(x) => x,
+      Err(e) => return Err(PropertiesError::new("I/O error", Some(Box::new(e)))),
+    }
+  }
+}
+
+fn unicode_escape(_encoder: &mut RawEncoder, input: &str, output: &mut ByteWriter) -> bool {
+  let escapes: Vec<String> = input.chars().map(|ch| format!("\\u{:x}", ch as isize)).collect();
+  let escapes = escapes.concat();
+  output.write_bytes(escapes.as_bytes());
+  true
+}
+
+static UNICODE_ESCAPE: EncoderTrap = EncoderTrap::Call(unicode_escape);
+
+pub struct PropertiesWriter<W: Write> {
+  writer: W
+}
+
+impl<W: Write> PropertiesWriter<W> {
+  pub fn new(writer: W) -> Self {
+    PropertiesWriter {
+      writer: writer,
+    }
+  }
+
+  pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
+    try_io!(self.writer.write_all(&['#' as u8, ' ' as u8]));
+    let data = ISO_8859_1.encode(comment, UNICODE_ESCAPE);
+    match data {
+      Ok(d) => try_io!(self.writer.write_all(&d)),
+      Err(_) => return Err(PropertiesError::new("Encoding error", None)),
+    };
+    try_io!(self.writer.write_all(&['\n' as u8]));
+    Ok(())
+  }
+
+  fn write_escaped(&mut self, s: &str) -> Result<(), PropertiesError> {
+    let mut escaped = String::new();
+    for c in s.chars() {
+      match c {
+        '\\' => escaped.push_str("\\\\"),
+        ' ' => escaped.push_str("\\ "),
+        '\t' => escaped.push_str("\\t"),
+        '\r' => escaped.push_str("\\r"),
+        '\n' => escaped.push_str("\\n"),
+        '\x0c' => escaped.push_str("\\f"),
+        ':' => escaped.push_str("\\:"),
+        '=' => escaped.push_str("\\="),
+        _ if c < ' ' => escaped.push_str(&format!("\\u{:x}", c as u16)),
+        _ => escaped.push(c), // We don't worry about other characters, since they're taken care of below.
+      }
+    }
+    match ISO_8859_1.encode(&escaped, UNICODE_ESCAPE) {
+      Ok(d) => try_io!(self.writer.write_all(&d)),
+      Err(_) => return Err(PropertiesError::new("Encoding error", None)),
+    };
+    Ok(())
+  }
+
+  pub fn write(&mut self, key: &str, value: &str) -> Result<(), PropertiesError> {
+    try!(self.write_escaped(key));
+    try_io!(self.writer.write_all(&['=' as u8]));
+    try!(self.write_escaped(value));
+    try_io!(self.writer.write_all(&['\n' as u8]));
+    Ok(())
+  }
+}
+
+/////////////////////
+
 #[cfg(test)]
 mod tests {
+  use encoding::all::ISO_8859_1;
+  use encoding::DecoderTrap;
+  use encoding::Encoding;
   use super::CR;
   use super::LF;
   use super::Line;
@@ -432,6 +517,7 @@ mod tests {
   use super::NaturalLines;
   use super::ParsedLine;
   use super::PropertiesIter;
+  use super::PropertiesWriter;
 
   const SP: u8 = 32; // space
 
@@ -615,7 +701,7 @@ mod tests {
         mk_pair(2, "c", "de=f"),
         mk_pair(4, "g", "h"),
         mk_comment(5, "comment1"),
-        mk_comment(6, "comment2\\"),
+        mk_comment(6, "comment2\u{0}"),
         mk_pair(7, "i", "j#comment3"),
         mk_comment(10, "comment4"),
       ]),
@@ -634,6 +720,56 @@ mod tests {
       match iter.next() {
         None => (),
         a => panic!("Failure while processing {:?}.  Expected None, but was {:?}", input, a),
+      }
+    }
+  }
+
+  #[test]
+  fn properties_writer_kv() {
+    let data = [
+      ("", "", "=\n"),
+      ("a", "b", "a=b\n"),
+      (" :=", " :=", "\\ \\:\\==\\ \\:\\=\n"),
+      ("\u{1F41E}", "\u{1F41E}", "\\u1f41e=\\u1f41e\n"),
+    ];
+    for &(key, value, expected) in data.iter() {
+      let mut buf = Vec::new();
+      {
+        let mut writer = PropertiesWriter::new(&mut buf);
+        writer.write(key, value).unwrap();
+      }
+      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
+        Ok(actual) => {
+          if expected != actual {
+            panic!("Failure while processing key {:?} and value {:?}.  Expected {:?}, but was {:?}", key, value, expected, actual);
+          }
+        },
+        Err(_) => panic!("Error decoding test output"),
+      }
+    }
+  }
+
+  #[test]
+  fn properties_writer_comment() {
+    let data = [
+      ("", "# \n"),
+      ("a", "# a\n"),
+      (" :=", "#  :=\n"),
+      ("\u{1F41E}", "# \\u1f41e\n"),
+    ];
+    for &(comment, expected) in data.iter() {
+      let mut buf = Vec::new();
+      {
+        let mut writer = PropertiesWriter::new(&mut buf);
+        writer.write_comment(comment).unwrap();
+      }
+      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
+        Ok(actual) => {
+          if expected != actual {
+            panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", comment, expected, actual);
+          }
+        },
+        Err(_) => panic!("Error decoding test output"),
       }
     }
   }
