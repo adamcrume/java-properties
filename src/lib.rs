@@ -119,7 +119,7 @@ impl< R: Read> Iterator for NaturalLines<R> {
 /////////////////////
 
 #[derive(PartialEq,Eq,Debug)]
-struct LogicalLine(String);
+struct LogicalLine(usize, String);
 
 struct LogicalLines<I: Iterator<Item=io::Result<NaturalLine>>> {
   physical_lines: I,
@@ -159,10 +159,14 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
     }
     let mut buf = String::new();
     let mut first = true;
+    let mut line_number = 0;
     loop {
       match self.physical_lines.next() {
         Some(Err(e)) => return Some(Err(e)),
-        Some(Ok(NaturalLine(_, line))) => {
+        Some(Ok(NaturalLine(line_no, line))) => {
+          if first {
+            line_number = line_no;
+          }
           buf.push_str(
             if first {
               &line
@@ -174,12 +178,14 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
             // This format is terrible.  We can't throw out comment lines before joining natural lines, because "a\\\n#b" should be joined into "a#b".
             // On the other hand, we can't join natural lines before processing comments, because "#a\\\nb" should stay as two lines, "#a\\" and "b".
             // Processing line joins and comments are inextricably linked.
-            return Some(Ok(LogicalLine(buf)));
+            assert!(line_number != 0);
+            return Some(Ok(LogicalLine(line_number, buf)));
           }
           if count_ending_backslashes(&line) % 2 == 1 {
             buf.pop();
           } else {
-            return Some(Ok(LogicalLine(buf)));
+            assert!(line_number != 0);
+            return Some(Ok(LogicalLine(line_number, buf)));
           }
         },
         None => {
@@ -401,12 +407,14 @@ mod tests {
           count += 1;
           Ok(NaturalLine(count, x.to_string()))
       }));
+      let mut e_ln = 0;
       for line in lines {
+        e_ln += 1;
         match (line.to_string(), iter.next()) {
-          (e, Some(Ok(LogicalLine(a)))) => if e != a {
-            panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input_lines, e, a);
+          (ref e, Some(Ok(LogicalLine(a_ln, ref a)))) => if (e_ln, e) != (a_ln, a) {
+            panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input_lines, (e_ln, e), (a_ln, a));
           },
-          (e, a) => panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input_lines, e, a),
+          (e, a) => panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input_lines, (e_ln, e), a),
         }
       }
       match iter.next() {
