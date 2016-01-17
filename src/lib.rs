@@ -206,9 +206,49 @@ enum ParsedLine<'a> {
 }
 
 #[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
-pub enum Line {
-  Comment(usize, String),
-  KVPair(usize, String, String),
+pub struct Line {
+  line_number: usize,
+  data: LineContent,
+}
+
+impl Line {
+  pub fn line_number(&self) -> usize {
+    self.line_number
+  }
+
+  pub fn content(&self) -> &LineContent {
+    &self.data
+  }
+
+  fn mk_pair(line_no: usize, key: String, value: String) -> Line {
+    Line {
+      line_number: line_no,
+      data: LineContent::KVPair {
+        key: key,
+        value: value,
+      },
+    }
+  }
+
+  fn mk_comment(line_no: usize, text: String) -> Line {
+    Line {
+      line_number: line_no,
+      data: LineContent::Comment {
+        text: text,
+      },
+    }
+  }
+}
+
+#[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
+pub enum LineContent {
+  Comment {
+    text: String
+  },
+  KVPair {
+    key: String,
+    value: String,
+  },
 }
 
 /////////////////////
@@ -352,7 +392,10 @@ impl<R: Read> Iterator for PropertiesIter<R> {
           Ok(LogicalLine(line_no, line)) => match self.parser.parse_line(&line) {
             Some(parsed_line) => {
               match parsed_line {
-                ParsedLine::Comment(c) => return Some(Ok(Line::Comment(line_no, c.to_string()))), // Do we need to unescape comments?  This is beyond the scope of the spec.
+                ParsedLine::Comment(c) => {
+                  let line = Line::mk_comment(line_no, c.to_string());
+                  return Some(Ok(line)); // Do we need to unescape comments?  This is beyond the scope of the spec.
+                },
                 ParsedLine::KVPair(k, v) => {
                   let key = match unescape(k) {
                     Ok(x) => x,
@@ -362,7 +405,8 @@ impl<R: Read> Iterator for PropertiesIter<R> {
                     Ok(x) => x,
                     Err(e) => return Some(Err(e)),
                   };
-                  return Some(Ok(Line::KVPair(line_no, key, value)));
+                  let line = Line::mk_pair(line_no, key, value);
+                  return Some(Ok(line));
                 }
               }
             },
@@ -558,19 +602,25 @@ mod tests {
 
   #[test]
   fn properties_iter() {
+    fn mk_comment(line_no: usize, text: &str) -> Line {
+      Line::mk_comment(line_no, text.to_string())
+    }
+    fn mk_pair(line_no: usize, key: &str, value: &str) -> Line {
+      Line::mk_pair(line_no, key.to_string(), value.to_string())
+    }
     let data = [
       ("", vec![]),
-      ("a=b", vec![Line::KVPair(1, "a".to_string(), "b".to_string())]),
+      ("a=b", vec![mk_pair(1, "a", "b")]),
       ("a=b\nc=d\\\ne=f\ng=h\r#comment1\r\n#comment2\\\ni=j\\\n#comment3\n \n#comment4", vec![
-        Line::KVPair(1, "a".to_string(), "b".to_string()),
-        Line::KVPair(2, "c".to_string(), "de=f".to_string()),
-        Line::KVPair(4, "g".to_string(), "h".to_string()),
-        Line::Comment(5, "comment1".to_string()),
-        Line::Comment(6, "comment2\\".to_string()),
-        Line::KVPair(7, "i".to_string(), "j#comment3".to_string()),
-        Line::Comment(10, "comment4".to_string()),
+        mk_pair(1, "a", "b"),
+        mk_pair(2, "c", "de=f"),
+        mk_pair(4, "g", "h"),
+        mk_comment(5, "comment1"),
+        mk_comment(6, "comment2\\"),
+        mk_pair(7, "i", "j#comment3"),
+        mk_comment(10, "comment4"),
       ]),
-      ("a = b\\\n  c, d ", vec![Line::KVPair(1, "a".to_string(), "bc, d".to_string())]),
+      ("a = b\\\n  c, d ", vec![mk_pair(1, "a", "bc, d")]),
     ];
     for &(input, ref lines) in data.iter() {
       let mut iter = PropertiesIter::new(input.as_bytes());
