@@ -7,7 +7,6 @@ use encoding::Encoding;
 use encoding::DecoderTrap;
 use encoding::all::ISO_8859_1;
 use regex::Regex;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Display;
@@ -206,6 +205,12 @@ enum ParsedLine<'a> {
   KVPair(&'a str, &'a str),
 }
 
+#[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
+pub enum Line {
+  Comment(usize, String),
+  KVPair(usize, String, String),
+}
+
 /////////////////////
 
 fn unescape(s: &str) -> Result<String, PropertiesError> {
@@ -322,16 +327,53 @@ impl LineParser {
   }
 }
 
-pub fn load(reader: &mut BufRead) -> Result<HashMap<String, String>, PropertiesError> {
-  let map = HashMap::new();
-  let mut lines = LogicalLines::new(NaturalLines::new(reader));
-  loop {
-    match lines.next() {
-      Some(line) => (), // TODO
-      None => break,
+pub struct PropertiesIter<R: Read> {
+  lines: LogicalLines<NaturalLines<R>>,
+  parser: LineParser,
+}
+
+impl<R: Read> PropertiesIter<R> {
+  pub fn new(input: R) -> Self {
+    PropertiesIter {
+      lines: LogicalLines::new(NaturalLines::new(input)),
+      parser: LineParser::new(),
     }
   }
-  Ok(map)
+}
+
+// TODO: return line number
+impl<R: Read> Iterator for PropertiesIter<R> {
+  type Item = Result<Line, PropertiesError>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    loop {
+      match self.lines.next() {
+        Some(maybe_line) => match maybe_line {
+          Ok(LogicalLine(line_no, line)) => match self.parser.parse_line(&line) {
+            Some(parsed_line) => {
+              match parsed_line {
+                ParsedLine::Comment(c) => return Some(Ok(Line::Comment(line_no, c.to_string()))), // Do we need to unescape comments?  This is beyond the scope of the spec.
+                ParsedLine::KVPair(k, v) => {
+                  let key = match unescape(k) {
+                    Ok(x) => x,
+                    Err(e) => return Some(Err(e)),
+                  };
+                  let value = match unescape(v) {
+                    Ok(x) => x,
+                    Err(e) => return Some(Err(e)),
+                  };
+                  return Some(Ok(Line::KVPair(line_no, key, value)));
+                }
+              }
+            },
+            None => (), // empty line, continue
+          },
+          Err(e) => return Some(Err(PropertiesError::new("I/O error", Some(Box::new(e))))),
+        },
+        None => return None,
+      }
+    }
+  }
 }
 
 /////////////////////
@@ -340,11 +382,13 @@ pub fn load(reader: &mut BufRead) -> Result<HashMap<String, String>, PropertiesE
 mod tests {
   use super::CR;
   use super::LF;
+  use super::Line;
   use super::LogicalLine;
   use super::LogicalLines;
   use super::NaturalLine;
   use super::NaturalLines;
   use super::ParsedLine;
+  use super::PropertiesIter;
 
   const SP: u8 = 32; // space
 
@@ -508,6 +552,39 @@ mod tests {
       };
       if !is_match {
         panic!("Failed when unescaping {:?}.  Expected {:?} but got {:?}", input, expected, actual);
+      }
+    }
+  }
+
+  #[test]
+  fn properties_iter() {
+    let data = [
+      ("", vec![]),
+      ("a=b", vec![Line::KVPair(1, "a".to_string(), "b".to_string())]),
+      ("a=b\nc=d\\\ne=f\ng=h\r#comment1\r\n#comment2\\\ni=j\\\n#comment3\n \n#comment4", vec![
+        Line::KVPair(1, "a".to_string(), "b".to_string()),
+        Line::KVPair(2, "c".to_string(), "de=f".to_string()),
+        Line::KVPair(4, "g".to_string(), "h".to_string()),
+        Line::Comment(5, "comment1".to_string()),
+        Line::Comment(6, "comment2\\".to_string()),
+        Line::KVPair(7, "i".to_string(), "j#comment3".to_string()),
+        Line::Comment(10, "comment4".to_string()),
+      ]),
+      ("a = b\\\n  c, d ", vec![Line::KVPair(1, "a".to_string(), "bc, d".to_string())]),
+    ];
+    for &(input, ref lines) in data.iter() {
+      let mut iter = PropertiesIter::new(input.as_bytes());
+      for line in lines {
+        match (line, iter.next()) {
+          (ref e, Some(Ok(ref a))) => if e != &a {
+            panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input, e, a);
+          },
+          (e, a) => panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input, e, a),
+        }
+      }
+      match iter.next() {
+        None => (),
+        a => panic!("Failure while processing {:?}.  Expected None, but was {:?}", input, a),
       }
     }
   }
