@@ -235,32 +235,22 @@ impl Line {
   fn mk_pair(line_no: usize, key: String, value: String) -> Line {
     Line {
       line_number: line_no,
-      data: LineContent::KVPair {
-        key: key,
-        value: value,
-      },
+      data: LineContent::KVPair(key, value),
     }
   }
 
   fn mk_comment(line_no: usize, text: String) -> Line {
     Line {
       line_number: line_no,
-      data: LineContent::Comment {
-        text: text,
-      },
+      data: LineContent::Comment(text),
     }
   }
 }
 
 #[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
 pub enum LineContent {
-  Comment {
-    text: String
-  },
-  KVPair {
-    key: String,
-    value: String,
-  },
+  Comment(String),
+  KVPair(String, String),
 }
 
 /////////////////////
