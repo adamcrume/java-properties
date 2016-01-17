@@ -195,6 +195,58 @@ enum ParsedLine<'a> {
 
 /////////////////////
 
+fn unescape(s: &str) -> Result<String, PropertiesError> {
+  let mut buf = String::new();
+  let mut iter = s.chars();
+  loop {
+    match iter.next() {
+      None => break,
+      Some(c) => {
+        if c == '\\' {
+          match iter.next() {
+            Some(c) => match c {
+              // \b is specifically blacklisted by the documentation.  Why?  Who knows.
+              't' => buf.push('\t'),
+              'n' => buf.push('\n'),
+              'f' => buf.push('\x0c'),
+              'r' => buf.push('\r'),
+              'u' => {
+                let mut tmp = String::new();
+                for _ in 0..4 {
+                  match iter.next() {
+                    Some(c) => tmp.push(c),
+                    None => return Err(PropertiesError::new("Malformed \\uxxxx encoding: not enough digits.", None)),
+                  }
+                }
+                let val = match u16::from_str_radix(&tmp, 16) {
+                  Ok(x) => x,
+                  Err(e) => return Err(PropertiesError::new("Malformed \\uxxxx encoding: not hex.", Some(Box::new(e)))),
+                };
+                match std::char::from_u32(val as u32) {
+                  Some(c) => buf.push(c),
+                  None => return Err(PropertiesError::new("Malformed \\uxxxx encoding: invalid character.", None)),
+                }
+              },
+              _ => buf.push(c),
+            },
+            None => {
+              // The Java implementation replaces a dangling backslash with a NUL byte (\0).
+              // Is this "correct"?  Probably not.
+              // It's never documented, so assume it's undefined behavior.
+              // Let's do what Java does, though.
+              buf.push('\x00');
+              break;
+            }
+          }
+        } else {
+          buf.push(c);
+        }
+      },
+    }
+  }
+  Ok(buf)
+}
+
 struct LineParser {
   re: Regex,
 }
@@ -411,6 +463,30 @@ mod tests {
       let actual = splitter.parse_line(line);
       if expected != &actual {
         panic!("Failed when splitting {:?}.  Expected {:?} but got {:?}", line, expected, actual);
+      }
+    }
+  }
+
+  #[test]
+  fn unescape() {
+    let data = [
+      (r"", Some("")),
+      (r"x", Some("x")),
+      (r"\\", Some("\\")),
+      (r"\\\n\r\t\f\u0001\b", Some("\\\n\r\t\x0c\u{0001}b")),
+      (r"\", Some("\x00")),
+      (r"\u", None),
+      (r"\uasfd", None),
+    ];
+    for &(input, expected) in data.iter() {
+      let actual = &super::unescape(input);
+      let is_match = match (expected, actual) {
+        (Some(e), &Ok(ref a)) => e == a,
+        (None, &Err(_)) => true,
+        _ => false,
+      };
+      if !is_match {
+        panic!("Failed when unescaping {:?}.  Expected {:?} but got {:?}", input, expected, actual);
       }
     }
   }
