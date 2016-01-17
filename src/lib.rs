@@ -1,4 +1,44 @@
-//! This is all based on https://docs.oracle.com/javase/7/docs/api/java/util/Properties.html.
+//! Utilities for reading and writing Java properties files
+//!
+//! The specification is taken from https://docs.oracle.com/javase/7/docs/api/java/util/Properties.html.
+//! Where the documentation is ambiguous or incomplete, behavior is based on the behavior of java.util.Properties.
+//!
+//! # Examples
+//!
+//! ```
+//! use java_properties::PropertiesIter;
+//! use java_properties::PropertiesWriter;
+//! use std::collections::HashMap;
+//! use std::env::temp_dir;
+//! use std::fs::File;
+//! use std::io::prelude::*;
+//!
+//! # fn main() {
+//! # fn foo() -> std::result::Result<(), java_properties::PropertiesError> {
+//! let mut file_name = temp_dir();
+//! file_name.push("java-properties-test.properties");
+//!
+//! // Writing
+//! let mut map1 = HashMap::new();
+//! map1.insert("a".to_string(), "b".to_string());
+//! let mut f = try!(File::create(&file_name));
+//! let mut writer = PropertiesWriter::new(f);
+//! for (k, v) in map1.iter() {
+//!   try!(writer.write(&k, &v));
+//! }
+//!
+//! // Reading
+//! let mut f = try!(File::open(&file_name));
+//! let mut map2 = HashMap::new();
+//! try!(PropertiesIter::new(f).read_into(|k, v| {
+//!   map2.insert(k, v);
+//! }));
+//! assert_eq!(map1, map2);
+//! # Ok(())
+//! # }
+//! # foo().unwrap();
+//! # }
+//! ```
 
 extern crate encoding;
 extern crate regex;
