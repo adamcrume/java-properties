@@ -10,6 +10,7 @@ use encoding::DecoderTrap;
 use encoding::RawEncoder;
 use encoding::all::ISO_8859_1;
 use regex::Regex;
+use std::convert::From;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Display;
@@ -50,6 +51,12 @@ impl Error for PropertiesError {
       Some(ref c) => Some(c.deref()),
       None => None,
     }
+  }
+}
+
+impl From<io::Error> for PropertiesError {
+  fn from(e: io::Error) -> Self {
+    PropertiesError::new("I/O error", Some(Box::new(e)))
   }
 }
 
@@ -417,7 +424,7 @@ impl<R: Read> Iterator for PropertiesIter<R> {
             },
             None => (), // empty line, continue
           },
-          Err(e) => return Some(Err(PropertiesError::new("I/O error", Some(Box::new(e))))),
+          Err(e) => return Some(Err(PropertiesError::from(e))),
         },
         None => return None,
       }
@@ -426,15 +433,6 @@ impl<R: Read> Iterator for PropertiesIter<R> {
 }
 
 /////////////////////
-
-macro_rules! try_io {
-  ($e:expr) => {
-    match $e {
-      Ok(x) => x,
-      Err(e) => return Err(PropertiesError::new("I/O error", Some(Box::new(e)))),
-    }
-  }
-}
 
 fn unicode_escape(_encoder: &mut RawEncoder, input: &str, output: &mut ByteWriter) -> bool {
   let escapes: Vec<String> = input.chars().map(|ch| format!("\\u{:x}", ch as isize)).collect();
@@ -457,13 +455,13 @@ impl<W: Write> PropertiesWriter<W> {
   }
 
   pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
-    try_io!(self.writer.write_all(&['#' as u8, ' ' as u8]));
+    try!(self.writer.write_all(&['#' as u8, ' ' as u8]));
     let data = ISO_8859_1.encode(comment, UNICODE_ESCAPE);
     match data {
-      Ok(d) => try_io!(self.writer.write_all(&d)),
+      Ok(d) => try!(self.writer.write_all(&d)),
       Err(_) => return Err(PropertiesError::new("Encoding error", None)),
     };
-    try_io!(self.writer.write_all(&['\n' as u8]));
+    try!(self.writer.write_all(&['\n' as u8]));
     Ok(())
   }
 
@@ -484,7 +482,7 @@ impl<W: Write> PropertiesWriter<W> {
       }
     }
     match ISO_8859_1.encode(&escaped, UNICODE_ESCAPE) {
-      Ok(d) => try_io!(self.writer.write_all(&d)),
+      Ok(d) => try!(self.writer.write_all(&d)),
       Err(_) => return Err(PropertiesError::new("Encoding error", None)),
     };
     Ok(())
@@ -492,14 +490,14 @@ impl<W: Write> PropertiesWriter<W> {
 
   pub fn write(&mut self, key: &str, value: &str) -> Result<(), PropertiesError> {
     try!(self.write_escaped(key));
-    try_io!(self.writer.write_all(&['=' as u8]));
+    try!(self.writer.write_all(&['=' as u8]));
     try!(self.write_escaped(value));
-    try_io!(self.writer.write_all(&['\n' as u8]));
+    try!(self.writer.write_all(&['\n' as u8]));
     Ok(())
   }
 
   pub fn flush(&mut self) -> Result<(), PropertiesError> {
-    try_io!(self.writer.flush());
+    try!(self.writer.flush());
     Ok(())
   }
 }
