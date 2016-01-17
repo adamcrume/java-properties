@@ -51,12 +51,13 @@ impl Display for PropertiesError {
 /////////////////////
 
 #[derive(PartialEq,Eq,Debug)]
-struct NaturalLine(String);
+struct NaturalLine(usize, String);
 
 // We can't use BufRead.lines() because it doesn't use the proper line endings
 struct NaturalLines<R: Read> {
   bytes: Peekable<Bytes<R>>,
   eof: bool,
+  line_count: usize,
 }
 
 impl<R: Read> NaturalLines<R> {
@@ -64,6 +65,7 @@ impl<R: Read> NaturalLines<R> {
     NaturalLines {
       bytes: reader.bytes().peekable(),
       eof: false,
+      line_count: 0,
     }
   }
 }
@@ -89,9 +91,13 @@ impl< R: Read> Iterator for NaturalLines<R> {
                   Some(&Ok(LF)) => { self.bytes.next(); },
                   _ => (),
                 }
-                return Some(Ok(NaturalLine(buf)));
+                self.line_count += 1;
+                return Some(Ok(NaturalLine(self.line_count, buf)));
               },
-              LF => return Some(Ok(NaturalLine(buf))),
+              LF => {
+                self.line_count += 1;
+                return Some(Ok(NaturalLine(self.line_count, buf)));
+              },
               _ => match ISO_8859_1.decode(&[b], DecoderTrap::Strict) {
                 Ok(s) => buf.push_str(&s),
                 Err(_) => return Some(Err(io::Error::new(ErrorKind::InvalidData, "Error reading ISO-8859-1 encoding"))),
@@ -102,7 +108,8 @@ impl< R: Read> Iterator for NaturalLines<R> {
         },
         None => {
           self.eof = true;
-          return Some(Ok(NaturalLine(buf)));
+          self.line_count += 1;
+          return Some(Ok(NaturalLine(self.line_count, buf)));
         },
       }
     }
@@ -155,7 +162,7 @@ impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
     loop {
       match self.physical_lines.next() {
         Some(Err(e)) => return Some(Err(e)),
-        Some(Ok(NaturalLine(line))) => {
+        Some(Ok(NaturalLine(_, line))) => {
           buf.push_str(
             if first {
               &line
@@ -356,13 +363,15 @@ mod tests {
     for &(ref bytes, ref lines) in data.iter() {
       let reader = &bytes as &[u8];
       let mut iter = NaturalLines::new(reader);
+      let mut count = 1;
       for line in lines {
         match (line.to_string(), iter.next()) {
-          (e, Some(Ok(NaturalLine(a)))) => if e != a {
-            panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", bytes, e, a);
+          (ref e, Some(Ok(NaturalLine(a_ln, ref a)))) => if (count, e) != (a_ln, a) {
+            panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", bytes, (count, e), (a_ln, a));
           },
-          (e, a) => panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", bytes, e, a),
+          (e, a) => panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", bytes, (count, e), a),
         }
+        count += 1;
       }
       match iter.next() {
         None => (),
@@ -387,7 +396,11 @@ mod tests {
       (vec!["\u{1F41E}\\", " \u{1F41E}"], vec!["\u{1F41E}\u{1F41E}"]),
     ];
     for &(ref input_lines, ref lines) in data.iter() {
-      let mut iter = LogicalLines::new(input_lines.iter().map(|x| Ok(NaturalLine(x.to_string()))));
+      let mut count = 0;
+      let mut iter = LogicalLines::new(input_lines.iter().map(|x| {
+          count += 1;
+          Ok(NaturalLine(count, x.to_string()))
+      }));
       for line in lines {
         match (line.to_string(), iter.next()) {
           (e, Some(Ok(LogicalLine(a)))) => if e != a {
