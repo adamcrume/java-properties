@@ -381,7 +381,6 @@ impl<R: Read> PropertiesIter<R> {
   }
 }
 
-// TODO: return line number
 impl<R: Read> Iterator for PropertiesIter<R> {
   type Item = Result<Line, PropertiesError>;
 
