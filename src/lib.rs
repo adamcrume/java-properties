@@ -499,6 +499,11 @@ impl<W: Write> PropertiesWriter<W> {
     try_io!(self.writer.write_all(&['\n' as u8]));
     Ok(())
   }
+
+  pub fn flush(&mut self) -> Result<(), PropertiesError> {
+    try_io!(self.writer.flush());
+    Ok(())
+  }
 }
 
 /////////////////////
