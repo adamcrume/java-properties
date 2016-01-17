@@ -21,17 +21,18 @@ use std::io::ErrorKind;
 use std::io::Read;
 use std::io::Write;
 use std::iter::Peekable;
+use std::ops::Deref;
 
 /////////////////////
 
 #[derive(Debug)]
 pub struct PropertiesError {
   description: String,
-  cause: Option<Box<Error+Send+Sync>>,
+  cause: Option<Box<Error>>,
 }
 
 impl PropertiesError {
-  fn new(description: &str, cause: Option<Box<Error+Send+Sync>>) -> Self {
+  fn new(description: &str, cause: Option<Box<Error>>) -> Self {
     PropertiesError {
       description: description.to_string(),
       cause: cause,
@@ -42,6 +43,13 @@ impl PropertiesError {
 impl Error for PropertiesError {
   fn description(&self) -> &str {
     &self.description
+  }
+
+  fn cause(&self) -> Option<&Error> {
+    match self.cause {
+      Some(ref c) => Some(c.deref()),
+      None => None,
+    }
   }
 }
 
