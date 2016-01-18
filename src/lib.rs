@@ -65,6 +65,7 @@ use std::ops::Deref;
 
 /////////////////////
 
+/// The error type for reading and writing properties files.
 #[derive(Debug)]
 pub struct PropertiesError {
   description: String,
@@ -81,6 +82,7 @@ impl PropertiesError {
     }
   }
 
+  /// Returns the 1-based line number associated with the error, if available.
   pub fn line_number(&self) -> Option<usize> {
     self.line_number
   }
@@ -273,6 +275,7 @@ enum ParsedLine<'a> {
   KVPair(&'a str, &'a str),
 }
 
+/// A line read from a properties file.
 #[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
 pub struct Line {
   line_number: usize,
@@ -280,14 +283,17 @@ pub struct Line {
 }
 
 impl Line {
+  /// Returns the 1-based line number.
   pub fn line_number(&self) -> usize {
     self.line_number
   }
 
+  /// Returns the content of the line.
   pub fn content(&self) -> &LineContent {
     &self.data
   }
 
+  /// Returns the content of the line, consuming it in the process.
   pub fn consume_content(self) -> LineContent {
     self.data
   }
@@ -307,9 +313,13 @@ impl Line {
   }
 }
 
+/// Parsed content of the line.
 #[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
 pub enum LineContent {
+  /// Content of a comment line.
   Comment(String),
+
+  /// Content of a key/value line.
   KVPair(String, String),
 }
 
@@ -429,12 +439,17 @@ impl LineParser {
   }
 }
 
+/// Parses a propeties file and iterates over its contents.
+///
+/// For basic usage, see the crate-level documentation.
+/// Note that once `next` returns an error, the result of further calls is undefined.
 pub struct PropertiesIter<R: Read> {
   lines: LogicalLines<NaturalLines<R>>,
   parser: LineParser,
 }
 
 impl<R: Read> PropertiesIter<R> {
+  /// Parses properties from the given `Read` stream.
   pub fn new(input: R) -> Self {
     PropertiesIter {
       lines: LogicalLines::new(NaturalLines::new(input)),
@@ -442,6 +457,11 @@ impl<R: Read> PropertiesIter<R> {
     }
   }
 
+  /// Calls `f` for each key/value pair.
+  ///
+  /// Line numbers and comments are ignored.
+  /// On the first error, the error is returned.
+  /// Note that `f` may have already been called at this point.
   pub fn read_into<F: FnMut(String, String)>(&mut self, mut f: F) -> Result<(), PropertiesError> {
     for line in self {
       match try!(line).data {
@@ -469,9 +489,13 @@ impl<R: Read> PropertiesIter<R> {
   }
 }
 
+/// Note that once `next` returns an error, the result of further calls is undefined.
 impl<R: Read> Iterator for PropertiesIter<R> {
   type Item = Result<Line, PropertiesError>;
 
+  /// Returns the next line.
+  ///
+  /// Once this returns an error, the result of further calls is undefined.
   fn next(&mut self) -> Option<Self::Item> {
     loop {
       match self.lines.next() {
@@ -499,12 +523,14 @@ fn unicode_escape(_encoder: &mut RawEncoder, input: &str, output: &mut ByteWrite
 
 static UNICODE_ESCAPE: EncoderTrap = EncoderTrap::Call(unicode_escape);
 
+/// Writes to a properties file.
 pub struct PropertiesWriter<W: Write> {
   writer: W,
   lines_written: usize,
 }
 
 impl<W: Write> PropertiesWriter<W> {
+  /// Writes to the given `Write` stream.
   pub fn new(writer: W) -> Self {
     PropertiesWriter {
       writer: writer,
@@ -512,6 +538,7 @@ impl<W: Write> PropertiesWriter<W> {
     }
   }
 
+  /// Writes a comment to the file.
   pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
     self.lines_written += 1;
     try!(self.writer.write_all(&['#' as u8, ' ' as u8]));
@@ -548,6 +575,7 @@ impl<W: Write> PropertiesWriter<W> {
     Ok(())
   }
 
+  /// Writes a key/value pair to the file.
   pub fn write(&mut self, key: &str, value: &str) -> Result<(), PropertiesError> {
     try!(self.write_escaped(key));
     try!(self.writer.write_all(&['=' as u8]));
@@ -556,6 +584,7 @@ impl<W: Write> PropertiesWriter<W> {
     Ok(())
   }
 
+  /// Flushes the underlying stream.
   pub fn flush(&mut self) -> Result<(), PropertiesError> {
     try!(self.writer.flush());
     Ok(())
