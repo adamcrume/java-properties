@@ -11,6 +11,8 @@
 //! use std::collections::HashMap;
 //! use std::env::temp_dir;
 //! use std::fs::File;
+//! use std::io::BufReader;
+//! use std::io::BufWriter;
 //! use std::io::prelude::*;
 //!
 //! # fn main() {
@@ -22,15 +24,16 @@
 //! let mut map1 = HashMap::new();
 //! map1.insert("a".to_string(), "b".to_string());
 //! let mut f = try!(File::create(&file_name));
-//! let mut writer = PropertiesWriter::new(f);
+//! let mut writer = PropertiesWriter::new(BufWriter::new(f));
 //! for (k, v) in map1.iter() {
 //!   try!(writer.write(&k, &v));
 //! }
+//! writer.flush();
 //!
 //! // Reading
 //! let mut f = try!(File::open(&file_name));
 //! let mut map2 = HashMap::new();
-//! try!(PropertiesIter::new(f).read_into(|k, v| {
+//! try!(PropertiesIter::new(BufReader::new(f)).read_into(|k, v| {
 //!   map2.insert(k, v);
 //! }));
 //! assert_eq!(map1, map2);
