@@ -107,7 +107,11 @@ impl From<io::Error> for PropertiesError {
 
 impl Display for PropertiesError {
   fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-    Display::fmt(&self.description, f)
+    try!(write!(f, "{}", &self.description));
+    match self.line_number {
+      Some(n) => write!(f, " (line_number = {})", n),
+      None => write!(f, " (line_number = unknown)"),
+    }
   }
 }
 
@@ -576,6 +580,7 @@ mod tests {
   use super::NaturalLine;
   use super::NaturalLines;
   use super::ParsedLine;
+  use super::PropertiesError;
   use super::PropertiesIter;
   use super::PropertiesWriter;
 
@@ -865,5 +870,11 @@ mod tests {
       }
       assert!(got_error);
     }
+  }
+
+  #[test]
+  fn properties_error_display() {
+    assert_eq!(format!("{}", PropertiesError::new("foo", None, None)), "foo (line_number = unknown)");
+    assert_eq!(format!("{}", PropertiesError::new("foo", None, Some(1))), "foo (line_number = 1)");
   }
 }
