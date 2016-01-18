@@ -58,7 +58,6 @@ use std::fmt::Formatter;
 use std::io;
 use std::io::BufRead;
 use std::io::Bytes;
-use std::io::ErrorKind;
 use std::io::Read;
 use std::io::Write;
 use std::iter::Peekable;
@@ -70,14 +69,20 @@ use std::ops::Deref;
 pub struct PropertiesError {
   description: String,
   cause: Option<Box<Error>>,
+  line_number: Option<usize>,
 }
 
 impl PropertiesError {
-  fn new(description: &str, cause: Option<Box<Error>>) -> Self {
+  fn new(description: &str, cause: Option<Box<Error>>, line_number: Option<usize>) -> Self {
     PropertiesError {
       description: description.to_string(),
       cause: cause,
+      line_number: line_number,
     }
+  }
+
+  pub fn line_number(&self) -> Option<usize> {
+    self.line_number
   }
 }
 
@@ -96,7 +101,7 @@ impl Error for PropertiesError {
 
 impl From<io::Error> for PropertiesError {
   fn from(e: io::Error) -> Self {
-    PropertiesError::new("I/O error", Some(Box::new(e)))
+    PropertiesError::new("I/O error", Some(Box::new(e)), None)
   }
 }
 
@@ -132,7 +137,7 @@ const LF: u8 = 10;
 const CR: u8 = 13;
 
 impl< R: Read> Iterator for NaturalLines<R> {
-  type Item = io::Result<NaturalLine>;
+  type Item = Result<NaturalLine, PropertiesError>;
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.eof {
@@ -158,11 +163,11 @@ impl< R: Read> Iterator for NaturalLines<R> {
               },
               _ => match ISO_8859_1.decode(&[b], DecoderTrap::Strict) {
                 Ok(s) => buf.push_str(&s),
-                Err(_) => return Some(Err(io::Error::new(ErrorKind::InvalidData, "Error reading ISO-8859-1 encoding"))),
+                Err(_) => return Some(Err(PropertiesError::new("Error reading ISO-8859-1 encoding", None, Some(self.line_count)))),
               },
             };
           },
-          Err(e) => return Some(Err(e)),
+          Err(e) => return Some(Err(PropertiesError::new("I/O error", Some(Box::new(e)), Some(self.line_count + 1)))),
         },
         None => {
           self.eof = true;
@@ -179,13 +184,13 @@ impl< R: Read> Iterator for NaturalLines<R> {
 #[derive(PartialEq,Eq,Debug)]
 struct LogicalLine(usize, String);
 
-struct LogicalLines<I: Iterator<Item=io::Result<NaturalLine>>> {
+struct LogicalLines<I: Iterator<Item=Result<NaturalLine, PropertiesError>>> {
   physical_lines: I,
   eof: bool,
   comment_re: Regex,
 }
 
-impl<I: Iterator<Item=io::Result<NaturalLine>>> LogicalLines<I> {
+impl<I: Iterator<Item=Result<NaturalLine, PropertiesError>>> LogicalLines<I> {
   fn new(physical_lines: I) -> Self {
     LogicalLines {
       physical_lines: physical_lines,
@@ -208,8 +213,8 @@ fn count_ending_backslashes(s: &str) -> usize {
   n
 }
 
-impl<I: Iterator<Item=io::Result<NaturalLine>>> Iterator for LogicalLines<I> {
-  type Item = io::Result<LogicalLine>;
+impl<I: Iterator<Item=Result<NaturalLine, PropertiesError>>> Iterator for LogicalLines<I> {
+  type Item = Result<LogicalLine, PropertiesError>;
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.eof {
@@ -306,7 +311,7 @@ pub enum LineContent {
 
 /////////////////////
 
-fn unescape(s: &str) -> Result<String, PropertiesError> {
+fn unescape(s: &str, line_number: usize) -> Result<String, PropertiesError> {
   let mut buf = String::new();
   let mut iter = s.chars();
   loop {
@@ -326,16 +331,16 @@ fn unescape(s: &str) -> Result<String, PropertiesError> {
                 for _ in 0..4 {
                   match iter.next() {
                     Some(c) => tmp.push(c),
-                    None => return Err(PropertiesError::new("Malformed \\uxxxx encoding: not enough digits.", None)),
+                    None => return Err(PropertiesError::new("Malformed \\uxxxx encoding: not enough digits.", None, Some(line_number))),
                   }
                 }
                 let val = match u16::from_str_radix(&tmp, 16) {
                   Ok(x) => x,
-                  Err(e) => return Err(PropertiesError::new("Malformed \\uxxxx encoding: not hex.", Some(Box::new(e)))),
+                  Err(e) => return Err(PropertiesError::new("Malformed \\uxxxx encoding: not hex.", Some(Box::new(e)), Some(line_number))),
                 };
                 match std::char::from_u32(val as u32) {
                   Some(c) => buf.push(c),
-                  None => return Err(PropertiesError::new("Malformed \\uxxxx encoding: invalid character.", None)),
+                  None => return Err(PropertiesError::new("Malformed \\uxxxx encoding: invalid character.", None, Some(line_number))),
                 }
               },
               _ => buf.push(c),
@@ -444,6 +449,20 @@ impl<R: Read> PropertiesIter<R> {
     }
     Ok(())
   }
+
+  fn parsed_line_to_line(&self, parsed_line: ParsedLine, line_number: usize) -> Result<Line, PropertiesError> {
+    Ok(match parsed_line {
+      ParsedLine::Comment(c) => {
+        let comment = try!(unescape(c, line_number));
+        Line::mk_comment(line_number, comment)
+      },
+      ParsedLine::KVPair(k, v) => {
+        let key = try!(unescape(k, line_number));
+        let value = try!(unescape(v, line_number));
+        Line::mk_pair(line_number, key, value)
+      },
+    })
+  }
 }
 
 impl<R: Read> Iterator for PropertiesIter<R> {
@@ -454,33 +473,10 @@ impl<R: Read> Iterator for PropertiesIter<R> {
       match self.lines.next() {
         Some(maybe_line) => match maybe_line {
           Ok(LogicalLine(line_no, line)) => match self.parser.parse_line(&line) {
-            Some(parsed_line) => {
-              match parsed_line {
-                ParsedLine::Comment(c) => {
-                  let comment = match unescape(c) {
-                    Ok(x) => x,
-                    Err(e) => return Some(Err(e)),
-                  };
-                  let line = Line::mk_comment(line_no, comment);
-                  return Some(Ok(line));
-                },
-                ParsedLine::KVPair(k, v) => {
-                  let key = match unescape(k) {
-                    Ok(x) => x,
-                    Err(e) => return Some(Err(e)),
-                  };
-                  let value = match unescape(v) {
-                    Ok(x) => x,
-                    Err(e) => return Some(Err(e)),
-                  };
-                  let line = Line::mk_pair(line_no, key, value);
-                  return Some(Ok(line));
-                }
-              }
-            },
+            Some(parsed_line) => {return Some(self.parsed_line_to_line(parsed_line, line_no));},
             None => (), // empty line, continue
           },
-          Err(e) => return Some(Err(PropertiesError::from(e))),
+          Err(e) => return Some(Err(e)),
         },
         None => return None,
       }
@@ -500,28 +496,32 @@ fn unicode_escape(_encoder: &mut RawEncoder, input: &str, output: &mut ByteWrite
 static UNICODE_ESCAPE: EncoderTrap = EncoderTrap::Call(unicode_escape);
 
 pub struct PropertiesWriter<W: Write> {
-  writer: W
+  writer: W,
+  lines_written: usize,
 }
 
 impl<W: Write> PropertiesWriter<W> {
   pub fn new(writer: W) -> Self {
     PropertiesWriter {
       writer: writer,
+      lines_written: 0,
     }
   }
 
   pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
+    self.lines_written += 1;
     try!(self.writer.write_all(&['#' as u8, ' ' as u8]));
     let data = ISO_8859_1.encode(comment, UNICODE_ESCAPE);
     match data {
       Ok(d) => try!(self.writer.write_all(&d)),
-      Err(_) => return Err(PropertiesError::new("Encoding error", None)),
+      Err(_) => return Err(PropertiesError::new("Encoding error", None, Some(self.lines_written))),
     };
     try!(self.writer.write_all(&['\n' as u8]));
     Ok(())
   }
 
   fn write_escaped(&mut self, s: &str) -> Result<(), PropertiesError> {
+    self.lines_written += 1;
     let mut escaped = String::new();
     for c in s.chars() {
       match c {
@@ -539,7 +539,7 @@ impl<W: Write> PropertiesWriter<W> {
     }
     match ISO_8859_1.encode(&escaped, UNICODE_ESCAPE) {
       Ok(d) => try!(self.writer.write_all(&d)),
-      Err(_) => return Err(PropertiesError::new("Encoding error", None)),
+      Err(_) => return Err(PropertiesError::new("Encoding error", None, Some(self.lines_written))),
     };
     Ok(())
   }
@@ -565,6 +565,9 @@ mod tests {
   use encoding::all::ISO_8859_1;
   use encoding::DecoderTrap;
   use encoding::Encoding;
+  use std::io;
+  use std::io::ErrorKind;
+  use std::io::Read;
   use super::CR;
   use super::LF;
   use super::Line;
@@ -730,7 +733,7 @@ mod tests {
       (r"\uasfd", None),
     ];
     for &(input, expected) in data.iter() {
-      let actual = &super::unescape(input);
+      let actual = &super::unescape(input, 1);
       let is_match = match (expected, actual) {
         (Some(e), &Ok(ref a)) => e == a,
         (None, &Err(_)) => true,
@@ -828,6 +831,39 @@ mod tests {
         },
         Err(_) => panic!("Error decoding test output"),
       }
+    }
+  }
+
+  struct ErrorReader;
+
+  impl Read for ErrorReader {
+    fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+      Err(io::Error::new(ErrorKind::InvalidData, "dummy error"))
+    }
+  }
+
+  #[test]
+  fn properties_error_line_number() {
+    let data = [
+      ("", 1),
+      ("\n", 2),
+      ("\r", 2),
+      ("\r\n", 2),
+      ("\\uxxxx", 1),
+      ("\n\\uxxxx", 2),
+      ("a\\\nb\n\\uxxxx", 3),
+    ];
+    for &(input, line_number) in data.iter() {
+      let iter = PropertiesIter::new(input.as_bytes().chain(ErrorReader));
+      let mut got_error = false;
+      for line in iter {
+        if let Err(e) = line {
+          assert_eq!(e.line_number(), Some(line_number));
+          got_error = true;
+          break;
+        }
+      }
+      assert!(got_error);
     }
   }
 }
