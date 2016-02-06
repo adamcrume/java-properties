@@ -1,6 +1,6 @@
 [package]
 name = "java-properties"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Adam Crume <adamcrume@gmail.com>"]
 description = "A library for reading and writing Java properties files in Rust."
 keywords = ["java", "properties"]
@@ -9,5 +9,5 @@ repository = "https://github.com/adamcrume/java-properties"
 license = "MIT"
 
 [dependencies]
-encoding = "0.2.32"
-regex = "0.1.47"
+encoding = "^0.2.32"
+regex = "^0.1.47"
