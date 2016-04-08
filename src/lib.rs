@@ -531,6 +531,7 @@ static UNICODE_ESCAPE: EncoderTrap = EncoderTrap::Call(unicode_escape);
 pub struct PropertiesWriter<W: Write> {
   writer: W,
   lines_written: usize,
+  comment_prefix: Vec<u8>,
 }
 
 impl<W: Write> PropertiesWriter<W> {
@@ -539,13 +540,14 @@ impl<W: Write> PropertiesWriter<W> {
     PropertiesWriter {
       writer: writer,
       lines_written: 0,
+      comment_prefix: vec!['#' as u8, ' ' as u8],
     }
   }
 
   /// Writes a comment to the file.
   pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
     self.lines_written += 1;
-    try!(self.writer.write_all(&['#' as u8, ' ' as u8]));
+    try!(self.writer.write_all(&self.comment_prefix));
     let data = ISO_8859_1.encode(comment, UNICODE_ESCAPE);
     match data {
       Ok(d) => try!(self.writer.write_all(&d)),
@@ -591,6 +593,23 @@ impl<W: Write> PropertiesWriter<W> {
   /// Flushes the underlying stream.
   pub fn flush(&mut self) -> Result<(), PropertiesError> {
     try!(self.writer.flush());
+    Ok(())
+  }
+
+  /// Sets the comment prefix.
+  ///
+  /// The prefix must contain a '#' or a '!', may only contain spaces, tabs, or form feeds before the comment character,
+  /// and may not contain any carriage returns or line feeds ('\r' or '\n').
+  pub fn set_comment_prefix(&mut self, prefix: &str) -> Result<(), PropertiesError> {
+    let re = Regex::new(r"^[ \t\x0c]*[#!][^\r\n]*$").unwrap();
+    if !re.is_match(prefix) {
+      return Err(PropertiesError::new(&format!("Bad comment prefix: {:?}", prefix), None, None));
+    }
+    let data = ISO_8859_1.encode(prefix, UNICODE_ESCAPE);
+    match data {
+      Ok(bytes) => self.comment_prefix = bytes,
+      Err(_) => return Err(PropertiesError::new("Encoding error", None, None)),
+    };
     Ok(())
   }
 }
@@ -859,6 +878,55 @@ mod tests {
       let mut buf = Vec::new();
       {
         let mut writer = PropertiesWriter::new(&mut buf);
+        writer.write_comment(comment).unwrap();
+      }
+      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
+        Ok(actual) => {
+          if expected != actual {
+            panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", comment, expected, actual);
+          }
+        },
+        Err(_) => panic!("Error decoding test output"),
+      }
+    }
+  }
+
+  #[test]
+  fn properties_writer_good_comment_prefix() {
+    let prefixes = ["#", "!", " #", " !", "#x", "!x", "\x0c#"];
+    let mut buf = Vec::new();
+    for prefix in prefixes.iter() {
+      let mut writer = PropertiesWriter::new(&mut buf);
+      writer.set_comment_prefix(prefix).unwrap();
+    }
+  }
+
+  #[test]
+  fn properties_writer_bad_comment_prefix() {
+    let prefixes = ["", " ", "x", "\n#", "#\n", "#\r"];
+    let mut buf = Vec::new();
+    for prefix in prefixes.iter() {
+      let mut writer = PropertiesWriter::new(&mut buf);
+      match writer.set_comment_prefix(prefix) {
+        Ok(_) => panic!("Unexpectedly succeded with prefix {:?}", prefix),
+        Err(_) => (),
+      }
+    }
+  }
+
+  #[test]
+  fn properties_writer_custom_comment_prefix() {
+    let data = [
+      ("", " !\n"),
+      ("a", " !a\n"),
+      (" :=", " ! :=\n"),
+      ("\u{1F41E}", " !\\u1f41e\n"),
+    ];
+    for &(comment, expected) in data.iter() {
+      let mut buf = Vec::new();
+      {
+        let mut writer = PropertiesWriter::new(&mut buf);
+        writer.set_comment_prefix(" !").unwrap();
         writer.write_comment(comment).unwrap();
       }
       match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
