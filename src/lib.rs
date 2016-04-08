@@ -1,3 +1,4 @@
+// -*-  indent-tabs-mode:nil; tab-width:2;  -*-
 //! Utilities for reading and writing Java properties files
 //!
 //! The specification is taken from https://docs.oracle.com/javase/7/docs/api/java/util/Properties.html.
