@@ -532,6 +532,7 @@ pub struct PropertiesWriter<W: Write> {
   writer: W,
   lines_written: usize,
   comment_prefix: Vec<u8>,
+  kv_separator: Vec<u8>,
 }
 
 impl<W: Write> PropertiesWriter<W> {
@@ -541,6 +542,7 @@ impl<W: Write> PropertiesWriter<W> {
       writer: writer,
       lines_written: 0,
       comment_prefix: vec!['#' as u8, ' ' as u8],
+      kv_separator: vec!['=' as u8],
     }
   }
 
@@ -584,7 +586,7 @@ impl<W: Write> PropertiesWriter<W> {
   /// Writes a key/value pair to the file.
   pub fn write(&mut self, key: &str, value: &str) -> Result<(), PropertiesError> {
     try!(self.write_escaped(key));
-    try!(self.writer.write_all(&['=' as u8]));
+    try!(self.writer.write_all(&self.kv_separator));
     try!(self.write_escaped(value));
     try!(self.writer.write_all(&['\n' as u8]));
     Ok(())
@@ -608,6 +610,23 @@ impl<W: Write> PropertiesWriter<W> {
     let data = ISO_8859_1.encode(prefix, UNICODE_ESCAPE);
     match data {
       Ok(bytes) => self.comment_prefix = bytes,
+      Err(_) => return Err(PropertiesError::new("Encoding error", None, None)),
+    };
+    Ok(())
+  }
+
+  /// Sets the key/value separator.
+  ///
+  /// The separator may be non-empty whitespace, or a colon with optional whitespace on either side,
+  /// or an equals sign with optional whitespace on either side.  (Whitespace here means ' ', '\t', or '\f'.)
+  pub fn set_kv_separator(&mut self, separator: &str) -> Result<(), PropertiesError> {
+    let re = Regex::new(r"^([ \t\x0c]*[:=][ \t\x0c]*|[ \t\x0c]+)$").unwrap();
+    if !re.is_match(separator) {
+      return Err(PropertiesError::new(&format!("Bad key/value separator: {:?}", separator), None, None));
+    }
+    let data = ISO_8859_1.encode(separator, UNICODE_ESCAPE);
+    match data {
+      Ok(bytes) => self.kv_separator = bytes,
       Err(_) => return Err(PropertiesError::new("Encoding error", None, None)),
     };
     Ok(())
@@ -933,6 +952,60 @@ mod tests {
         Ok(actual) => {
           if expected != actual {
             panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", comment, expected, actual);
+          }
+        },
+        Err(_) => panic!("Error decoding test output"),
+      }
+    }
+  }
+
+  #[test]
+  fn properties_writer_good_kv_separator() {
+    let separators = [":", "=", " ", " :", ": ", " =", "= ", "\x0c", "\t"];
+    let mut buf = Vec::new();
+    for separator in separators.iter() {
+      let mut writer = PropertiesWriter::new(&mut buf);
+      writer.set_kv_separator(separator).unwrap();
+    }
+  }
+
+  #[test]
+  fn properties_writer_bad_kv_separator() {
+    let separators = ["", "x", ":=", "=:", "\n", "\r"];
+    let mut buf = Vec::new();
+    for separator in separators.iter() {
+      let mut writer = PropertiesWriter::new(&mut buf);
+      match writer.set_kv_separator(separator) {
+        Ok(_) => panic!("Unexpectedly succeded with separator {:?}", separator),
+        Err(_) => (),
+      }
+    }
+  }
+
+  #[test]
+  fn properties_writer_custom_kv_separator() {
+    let data = [
+      (":", "x:y\n"),
+      ("=", "x=y\n"),
+      (" ", "x y\n"),
+      (" :", "x :y\n"),
+      (": ", "x: y\n"),
+      (" =", "x =y\n"),
+      ("= ", "x= y\n"),
+      ("\x0c", "x\x0cy\n"),
+      ("\t", "x\ty\n")
+    ];
+    for &(separator, expected) in data.iter() {
+      let mut buf = Vec::new();
+      {
+        let mut writer = PropertiesWriter::new(&mut buf);
+        writer.set_kv_separator(separator).unwrap();
+        writer.write("x", "y").unwrap();
+      }
+      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
+        Ok(actual) => {
+          if expected != actual {
+            panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", separator, expected, actual);
           }
         },
         Err(_) => panic!("Error decoding test output"),
