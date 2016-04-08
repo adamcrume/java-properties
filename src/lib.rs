@@ -527,12 +527,20 @@ fn unicode_escape(_encoder: &mut RawEncoder, input: &str, output: &mut ByteWrite
 
 static UNICODE_ESCAPE: EncoderTrap = EncoderTrap::Call(unicode_escape);
 
+#[derive(PartialEq,Eq,PartialOrd,Ord,Debug,Copy,Clone)]
+pub enum LineEnding {
+  CR,
+  LF,
+  CRLF,
+}
+
 /// Writes to a properties file.
 pub struct PropertiesWriter<W: Write> {
   writer: W,
   lines_written: usize,
   comment_prefix: Vec<u8>,
   kv_separator: Vec<u8>,
+  line_ending: LineEnding,
 }
 
 impl<W: Write> PropertiesWriter<W> {
@@ -543,7 +551,17 @@ impl<W: Write> PropertiesWriter<W> {
       lines_written: 0,
       comment_prefix: vec!['#' as u8, ' ' as u8],
       kv_separator: vec!['=' as u8],
+      line_ending: LineEnding::LF,
     }
+  }
+
+  fn write_eol(&mut self) -> Result<(), PropertiesError> {
+    try!(match self.line_ending {
+      LineEnding::CR => self.writer.write_all(&['\r' as u8]),
+      LineEnding::LF => self.writer.write_all(&['\n' as u8]),
+      LineEnding::CRLF => self.writer.write_all(&['\r' as u8, '\n' as u8]),
+    });
+    Ok(())
   }
 
   /// Writes a comment to the file.
@@ -555,7 +573,7 @@ impl<W: Write> PropertiesWriter<W> {
       Ok(d) => try!(self.writer.write_all(&d)),
       Err(_) => return Err(PropertiesError::new("Encoding error", None, Some(self.lines_written))),
     };
-    try!(self.writer.write_all(&['\n' as u8]));
+    try!(self.write_eol());
     Ok(())
   }
 
@@ -588,7 +606,7 @@ impl<W: Write> PropertiesWriter<W> {
     try!(self.write_escaped(key));
     try!(self.writer.write_all(&self.kv_separator));
     try!(self.write_escaped(value));
-    try!(self.writer.write_all(&['\n' as u8]));
+    try!(self.write_eol());
     Ok(())
   }
 
@@ -631,6 +649,11 @@ impl<W: Write> PropertiesWriter<W> {
     };
     Ok(())
   }
+
+  /// Sets the line ending.
+  pub fn set_line_ending(&mut self, line_ending: LineEnding) {
+    self.line_ending = line_ending;
+  }
 }
 
 /////////////////////
@@ -646,6 +669,7 @@ mod tests {
   use super::CR;
   use super::LF;
   use super::Line;
+  use super::LineEnding;
   use super::LogicalLine;
   use super::LogicalLines;
   use super::NaturalLine;
@@ -1006,6 +1030,32 @@ mod tests {
         Ok(actual) => {
           if expected != actual {
             panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", separator, expected, actual);
+          }
+        },
+        Err(_) => panic!("Error decoding test output"),
+      }
+    }
+  }
+
+  #[test]
+  fn properties_writer_custom_line_ending() {
+    let data = [
+      (LineEnding::CR, "# foo\rx=y\r"),
+      (LineEnding::LF, "# foo\nx=y\n"),
+      (LineEnding::CRLF, "# foo\r\nx=y\r\n"),
+    ];
+    for &(line_ending, expected) in data.iter() {
+      let mut buf = Vec::new();
+      {
+        let mut writer = PropertiesWriter::new(&mut buf);
+        writer.set_line_ending(line_ending);
+        writer.write_comment("foo").unwrap();
+        writer.write("x", "y").unwrap();
+      }
+      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
+        Ok(actual) => {
+          if expected != actual {
+            panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", line_ending, expected, actual);
           }
         },
         Err(_) => panic!("Error decoding test output"),
