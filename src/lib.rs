@@ -60,7 +60,6 @@ use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::io;
-use std::io::BufRead;
 use std::io::Bytes;
 use std::io::Read;
 use std::io::Write;
@@ -590,6 +589,8 @@ impl<W: Write> PropertiesWriter<W> {
         '\x0c' => escaped.push_str("\\f"),
         ':' => escaped.push_str("\\:"),
         '=' => escaped.push_str("\\="),
+        '!' => escaped.push_str("\\!"),
+        '#' => escaped.push_str("\\#"),
         _ if c < ' ' => escaped.push_str(&format!("\\u{:x}", c as u16)),
         _ => escaped.push(c), // We don't worry about other characters, since they're taken care of below.
       }
@@ -827,6 +828,8 @@ mod tests {
       (r"", Some("")),
       (r"x", Some("x")),
       (r"\\", Some("\\")),
+      (r"\#", Some("#")),
+      (r"\!", Some("!")),
       (r"\\\n\r\t\f\u0001\b", Some("\\\n\r\t\x0c\u{0001}b")),
       (r"\", Some("\x00")),
       (r"\u", None),
@@ -856,6 +859,8 @@ mod tests {
     let data = [
       ("", vec![]),
       ("a=b", vec![mk_pair(1, "a", "b")]),
+      ("a=\\#b", vec![mk_pair(1, "a", "#b")]),
+      ("\\!a=b", vec![mk_pair(1, "!a", "b")]),
       ("a=b\nc=d\\\ne=f\ng=h\r#comment1\r\n#comment2\\\ni=j\\\n#comment3\n \n#comment4", vec![
         mk_pair(1, "a", "b"),
         mk_pair(2, "c", "de=f"),
@@ -890,6 +895,7 @@ mod tests {
       ("", "", "=\n"),
       ("a", "b", "a=b\n"),
       (" :=", " :=", "\\ \\:\\==\\ \\:\\=\n"),
+      ("!", "#", "\\!=\\#\n"),
       ("\u{1F41E}", "\u{1F41E}", "\\u1f41e=\\u1f41e\n"),
     ];
     for &(key, value, expected) in data.iter() {
