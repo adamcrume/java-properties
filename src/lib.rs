@@ -526,10 +526,14 @@ fn unicode_escape(_encoder: &mut RawEncoder, input: &str, output: &mut ByteWrite
 
 static UNICODE_ESCAPE: EncoderTrap = EncoderTrap::Call(unicode_escape);
 
+/// A line ending style allowed in a Java properties file.
 #[derive(PartialEq,Eq,PartialOrd,Ord,Debug,Copy,Clone)]
 pub enum LineEnding {
+  /// Carriage return alone.
   CR,
+  /// Line feed alone.
   LF,
+  /// Carriage return followed by line feed.
   CRLF,
 }
 
