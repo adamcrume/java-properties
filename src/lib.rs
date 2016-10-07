@@ -316,6 +316,18 @@ impl Line {
   }
 }
 
+impl Into<LineContent> for Line {
+  fn into(self) -> LineContent {
+    self.data
+  }
+}
+
+impl Display for Line {
+  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    write!(f, "Line {{line_number: {}, content: {}}}", self.line_number, self.data)
+  }
+}
+
 /// Parsed content of the line.
 #[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
 pub enum LineContent {
@@ -324,6 +336,15 @@ pub enum LineContent {
 
   /// Content of a key/value line.
   KVPair(String, String),
+}
+
+impl Display for LineContent {
+  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    match self {
+      &LineContent::Comment(ref s) => write!(f, "Comment({:?})", s),
+      &LineContent::KVPair(ref k, ref v) => write!(f, "KVPair({:?}, {:?})", k, v),
+    }
+  }
 }
 
 /////////////////////
@@ -535,6 +556,16 @@ pub enum LineEnding {
   LF,
   /// Carriage return followed by line feed.
   CRLF,
+}
+
+impl Display for LineEnding {
+  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    match self {
+      &LineEnding::CR => f.write_str("LineEnding::CR"),
+      &LineEnding::LF => f.write_str("LineEnding::LF"),
+      &LineEnding::CRLF => f.write_str("LineEnding::CRLF"),
+    }
+  }
 }
 
 /// Writes to a properties file.
@@ -1110,5 +1141,13 @@ mod tests {
   fn properties_error_display() {
     assert_eq!(format!("{}", PropertiesError::new("foo", None, None)), "foo (line_number = unknown)");
     assert_eq!(format!("{}", PropertiesError::new("foo", None, Some(1))), "foo (line_number = 1)");
+  }
+
+  #[test]
+  fn line_display() {
+    assert_eq!(format!("{}", Line::mk_pair(1, "foo".to_string(), "bar".to_string())),
+               "Line {line_number: 1, content: KVPair(\"foo\", \"bar\")}");
+    assert_eq!(format!("{}", Line::mk_comment(1, "baz".to_string())),
+               "Line {line_number: 1, content: Comment(\"baz\")}");
   }
 }
