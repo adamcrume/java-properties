@@ -9,6 +9,8 @@
 //! ```
 //! use java_properties::PropertiesIter;
 //! use java_properties::PropertiesWriter;
+//! use java_properties::read;
+//! use java_properties::write;
 //! use std::collections::HashMap;
 //! use std::env::temp_dir;
 //! use std::fs::File;
@@ -21,23 +23,34 @@
 //! let mut file_name = temp_dir();
 //! file_name.push("java-properties-test.properties");
 //!
-//! // Writing
-//! let mut map1 = HashMap::new();
-//! map1.insert("a".to_string(), "b".to_string());
+//! // Writing simple
+//! let mut src_map1 = HashMap::new();
+//! src_map1.insert("a".to_string(), "b".to_string());
+//! let mut f = try!(File::create(&file_name));
+//! try!(write(BufWriter::new(f), &src_map1));
+//!
+//! // Writing advanced
+//! let mut src_map2 = HashMap::new();
+//! src_map2.insert("a".to_string(), "b".to_string());
 //! let mut f = try!(File::create(&file_name));
 //! let mut writer = PropertiesWriter::new(BufWriter::new(f));
-//! for (k, v) in map1.iter() {
+//! for (k, v) in src_map2.iter() {
 //!   try!(writer.write(&k, &v));
 //! }
 //! writer.flush();
 //!
-//! // Reading
+//! // Reading simple
+//! let mut f2 = try!(File::open(&file_name));
+//! let dst_map1 = try!(read(BufReader::new(f2)));
+//! assert_eq!(src_map1, dst_map1);
+//!
+//! // Reading advanced
 //! let mut f = try!(File::open(&file_name));
-//! let mut map2 = HashMap::new();
+//! let mut dst_map2 = HashMap::new();
 //! try!(PropertiesIter::new(BufReader::new(f)).read_into(|k, v| {
-//!   map2.insert(k, v);
+//!   dst_map2.insert(k, v);
 //! }));
-//! assert_eq!(map1, map2);
+//! assert_eq!(src_map2, dst_map2);
 //! # Ok(())
 //! # }
 //! # foo().unwrap();
@@ -54,6 +67,7 @@ use encoding::DecoderTrap;
 use encoding::RawEncoder;
 use encoding::all::ISO_8859_1;
 use regex::Regex;
+use std::collections::HashMap;
 use std::convert::From;
 use std::error::Error;
 use std::fmt;
@@ -463,7 +477,7 @@ impl LineParser {
   }
 }
 
-/// Parses a propeties file and iterates over its contents.
+/// Parses a properties file and iterates over its contents.
 ///
 /// For basic usage, see the crate-level documentation.
 /// Note that once `next` returns an error, the result of further calls is undefined.
@@ -690,6 +704,32 @@ impl<W: Write> PropertiesWriter<W> {
   pub fn set_line_ending(&mut self, line_ending: LineEnding) {
     self.line_ending = line_ending;
   }
+}
+
+/////////////////////
+
+/// Writes a hash map to a properties file.
+///
+/// For more advanced use cases, use `PropertiesWriter`.
+pub fn write<W: Write>(writer: W, map: &HashMap<String, String>) -> Result<(), PropertiesError> {
+  let mut writer = PropertiesWriter::new(writer);
+  for (k, v) in map.iter() {
+    try!(writer.write(&k, &v));
+  }
+  try!(writer.flush());
+  Ok(())
+}
+
+/// Reads a properties file into a hash map.
+///
+/// For more advanced use cases, use `PropertiesIter`.
+pub fn read<R: Read>(input: R) -> Result<HashMap<String, String>, PropertiesError> {
+  let mut p = PropertiesIter::new(input);
+  let mut map = HashMap::new();
+  try!(p.read_into(|k, v| {
+    map.insert(k, v);
+  }));
+  Ok(map)
 }
 
 /////////////////////
