@@ -1195,6 +1195,57 @@
 <span id="1151">1151</span>
 <span id="1152">1152</span>
 <span id="1153">1153</span>
+<span id="1154">1154</span>
+<span id="1155">1155</span>
+<span id="1156">1156</span>
+<span id="1157">1157</span>
+<span id="1158">1158</span>
+<span id="1159">1159</span>
+<span id="1160">1160</span>
+<span id="1161">1161</span>
+<span id="1162">1162</span>
+<span id="1163">1163</span>
+<span id="1164">1164</span>
+<span id="1165">1165</span>
+<span id="1166">1166</span>
+<span id="1167">1167</span>
+<span id="1168">1168</span>
+<span id="1169">1169</span>
+<span id="1170">1170</span>
+<span id="1171">1171</span>
+<span id="1172">1172</span>
+<span id="1173">1173</span>
+<span id="1174">1174</span>
+<span id="1175">1175</span>
+<span id="1176">1176</span>
+<span id="1177">1177</span>
+<span id="1178">1178</span>
+<span id="1179">1179</span>
+<span id="1180">1180</span>
+<span id="1181">1181</span>
+<span id="1182">1182</span>
+<span id="1183">1183</span>
+<span id="1184">1184</span>
+<span id="1185">1185</span>
+<span id="1186">1186</span>
+<span id="1187">1187</span>
+<span id="1188">1188</span>
+<span id="1189">1189</span>
+<span id="1190">1190</span>
+<span id="1191">1191</span>
+<span id="1192">1192</span>
+<span id="1193">1193</span>
+<span id="1194">1194</span>
+<span id="1195">1195</span>
+<span id="1196">1196</span>
+<span id="1197">1197</span>
+<span id="1198">1198</span>
+<span id="1199">1199</span>
+<span id="1200">1200</span>
+<span id="1201">1201</span>
+<span id="1202">1202</span>
+<span id="1203">1203</span>
+<span id="1204">1204</span>
 </pre><pre class='rust '>
 <span class='comment'>// -*-  indent-tabs-mode:nil; tab-width:2;  -*-</span>
 <span class='doccomment'>//! Utilities for reading and writing Java properties files</span>
@@ -1207,6 +1258,8 @@
 <span class='doccomment'>//! ```</span>
 <span class='doccomment'>//! use java_properties::PropertiesIter;</span>
 <span class='doccomment'>//! use java_properties::PropertiesWriter;</span>
+<span class='doccomment'>//! use java_properties::read;</span>
+<span class='doccomment'>//! use java_properties::write;</span>
 <span class='doccomment'>//! use std::collections::HashMap;</span>
 <span class='doccomment'>//! use std::env::temp_dir;</span>
 <span class='doccomment'>//! use std::fs::File;</span>
@@ -1219,23 +1272,34 @@
 <span class='doccomment'>//! let mut file_name = temp_dir();</span>
 <span class='doccomment'>//! file_name.push(&quot;java-properties-test.properties&quot;);</span>
 <span class='doccomment'>//!</span>
-<span class='doccomment'>//! // Writing</span>
-<span class='doccomment'>//! let mut map1 = HashMap::new();</span>
-<span class='doccomment'>//! map1.insert(&quot;a&quot;.to_string(), &quot;b&quot;.to_string());</span>
+<span class='doccomment'>//! // Writing simple</span>
+<span class='doccomment'>//! let mut src_map1 = HashMap::new();</span>
+<span class='doccomment'>//! src_map1.insert(&quot;a&quot;.to_string(), &quot;b&quot;.to_string());</span>
+<span class='doccomment'>//! let mut f = try!(File::create(&amp;file_name));</span>
+<span class='doccomment'>//! try!(write(BufWriter::new(f), &amp;src_map1));</span>
+<span class='doccomment'>//!</span>
+<span class='doccomment'>//! // Writing advanced</span>
+<span class='doccomment'>//! let mut src_map2 = HashMap::new();</span>
+<span class='doccomment'>//! src_map2.insert(&quot;a&quot;.to_string(), &quot;b&quot;.to_string());</span>
 <span class='doccomment'>//! let mut f = try!(File::create(&amp;file_name));</span>
 <span class='doccomment'>//! let mut writer = PropertiesWriter::new(BufWriter::new(f));</span>
-<span class='doccomment'>//! for (k, v) in map1.iter() {</span>
+<span class='doccomment'>//! for (k, v) in src_map2.iter() {</span>
 <span class='doccomment'>//!   try!(writer.write(&amp;k, &amp;v));</span>
 <span class='doccomment'>//! }</span>
 <span class='doccomment'>//! writer.flush();</span>
 <span class='doccomment'>//!</span>
-<span class='doccomment'>//! // Reading</span>
+<span class='doccomment'>//! // Reading simple</span>
+<span class='doccomment'>//! let mut f2 = try!(File::open(&amp;file_name));</span>
+<span class='doccomment'>//! let dst_map1 = try!(read(BufReader::new(f2)));</span>
+<span class='doccomment'>//! assert_eq!(src_map1, dst_map1);</span>
+<span class='doccomment'>//!</span>
+<span class='doccomment'>//! // Reading advanced</span>
 <span class='doccomment'>//! let mut f = try!(File::open(&amp;file_name));</span>
-<span class='doccomment'>//! let mut map2 = HashMap::new();</span>
+<span class='doccomment'>//! let mut dst_map2 = HashMap::new();</span>
 <span class='doccomment'>//! try!(PropertiesIter::new(BufReader::new(f)).read_into(|k, v| {</span>
-<span class='doccomment'>//!   map2.insert(k, v);</span>
+<span class='doccomment'>//!   dst_map2.insert(k, v);</span>
 <span class='doccomment'>//! }));</span>
-<span class='doccomment'>//! assert_eq!(map1, map2);</span>
+<span class='doccomment'>//! assert_eq!(src_map2, dst_map2);</span>
 <span class='doccomment'>//! # Ok(())</span>
 <span class='doccomment'>//! # }</span>
 <span class='doccomment'>//! # foo().unwrap();</span>
@@ -1252,6 +1316,7 @@
 <span class='kw'>use</span> <span class='ident'>encoding</span>::<span class='ident'>RawEncoder</span>;
 <span class='kw'>use</span> <span class='ident'>encoding</span>::<span class='ident'>all</span>::<span class='ident'>ISO_8859_1</span>;
 <span class='kw'>use</span> <span class='ident'>regex</span>::<span class='ident'>Regex</span>;
+<span class='kw'>use</span> <span class='ident'>std</span>::<span class='ident'>collections</span>::<span class='ident'>HashMap</span>;
 <span class='kw'>use</span> <span class='ident'>std</span>::<span class='ident'>convert</span>::<span class='ident'>From</span>;
 <span class='kw'>use</span> <span class='ident'>std</span>::<span class='ident'>error</span>::<span class='ident'>Error</span>;
 <span class='kw'>use</span> <span class='ident'>std</span>::<span class='ident'>fmt</span>;
@@ -1661,7 +1726,7 @@
   }
 }
 
-<span class='doccomment'>/// Parses a propeties file and iterates over its contents.</span>
+<span class='doccomment'>/// Parses a properties file and iterates over its contents.</span>
 <span class='doccomment'>///</span>
 <span class='doccomment'>/// For basic usage, see the crate-level documentation.</span>
 <span class='doccomment'>/// Note that once `next` returns an error, the result of further calls is undefined.</span>
@@ -1695,6 +1760,17 @@
     }
     <span class='prelude-val'>Ok</span>(())
   }
+
+  <span class='comment'>// /// Convenience method for reading data into a hash map.</span>
+  <span class='comment'>// ///</span>
+  <span class='comment'>// /// For more flexibility, use `read_into` instead.</span>
+  <span class='comment'>// pub fn read_hash_map(&amp;mut self) -&gt; Result&lt;HashMap&lt;String, String&gt;, PropertiesError&gt; {</span>
+  <span class='comment'>//   let mut map = HashMap::new();</span>
+  <span class='comment'>//   try!(self.read_into(|k, v| {</span>
+  <span class='comment'>//     map.insert(k, v);</span>
+  <span class='comment'>//   }));</span>
+  <span class='comment'>//   Ok(map)</span>
+  <span class='comment'>// }</span>
 
   <span class='kw'>fn</span> <span class='ident'>parsed_line_to_line</span>(<span class='kw-2'>&amp;</span><span class='self'>self</span>, <span class='ident'>parsed_line</span>: <span class='ident'>ParsedLine</span>, <span class='ident'>line_number</span>: <span class='ident'>usize</span>) <span class='op'>-&gt;</span> <span class='prelude-ty'>Result</span><span class='op'>&lt;</span><span class='ident'>Line</span>, <span class='ident'>PropertiesError</span><span class='op'>&gt;</span> {
     <span class='prelude-val'>Ok</span>(<span class='kw'>match</span> <span class='ident'>parsed_line</span> {
@@ -1888,6 +1964,32 @@
   <span class='kw'>pub</span> <span class='kw'>fn</span> <span class='ident'>set_line_ending</span>(<span class='kw-2'>&amp;</span><span class='kw-2'>mut</span> <span class='self'>self</span>, <span class='ident'>line_ending</span>: <span class='ident'>LineEnding</span>) {
     <span class='self'>self</span>.<span class='ident'>line_ending</span> <span class='op'>=</span> <span class='ident'>line_ending</span>;
   }
+}
+
+<span class='comment'>/////////////////////</span>
+
+<span class='doccomment'>/// Writes a hash map to a properties file.</span>
+<span class='doccomment'>///</span>
+<span class='doccomment'>/// For more advanced use cases, use `PropertiesWriter`.</span>
+<span class='kw'>pub</span> <span class='kw'>fn</span> <span class='ident'>write</span><span class='op'>&lt;</span><span class='ident'>W</span>: <span class='ident'>Write</span><span class='op'>&gt;</span>(<span class='ident'>writer</span>: <span class='ident'>W</span>, <span class='ident'>map</span>: <span class='kw-2'>&amp;</span><span class='ident'>HashMap</span><span class='op'>&lt;</span><span class='ident'>String</span>, <span class='ident'>String</span><span class='op'>&gt;</span>) <span class='op'>-&gt;</span> <span class='prelude-ty'>Result</span><span class='op'>&lt;</span>(), <span class='ident'>PropertiesError</span><span class='op'>&gt;</span> {
+  <span class='kw'>let</span> <span class='kw-2'>mut</span> <span class='ident'>writer</span> <span class='op'>=</span> <span class='ident'>PropertiesWriter</span>::<span class='ident'>new</span>(<span class='ident'>writer</span>);
+  <span class='kw'>for</span> (<span class='ident'>k</span>, <span class='ident'>v</span>) <span class='kw'>in</span> <span class='ident'>map</span>.<span class='ident'>iter</span>() {
+    <span class='macro'>try</span><span class='macro'>!</span>(<span class='ident'>writer</span>.<span class='ident'>write</span>(<span class='kw-2'>&amp;</span><span class='ident'>k</span>, <span class='kw-2'>&amp;</span><span class='ident'>v</span>));
+  }
+  <span class='macro'>try</span><span class='macro'>!</span>(<span class='ident'>writer</span>.<span class='ident'>flush</span>());
+  <span class='prelude-val'>Ok</span>(())
+}
+
+<span class='doccomment'>/// Reads a properties file into a hash map.</span>
+<span class='doccomment'>///</span>
+<span class='doccomment'>/// For more advanced use cases, use `PropertiesIter`.</span>
+<span class='kw'>pub</span> <span class='kw'>fn</span> <span class='ident'>read</span><span class='op'>&lt;</span><span class='ident'>R</span>: <span class='ident'>Read</span><span class='op'>&gt;</span>(<span class='ident'>input</span>: <span class='ident'>R</span>) <span class='op'>-&gt;</span> <span class='prelude-ty'>Result</span><span class='op'>&lt;</span><span class='ident'>HashMap</span><span class='op'>&lt;</span><span class='ident'>String</span>, <span class='ident'>String</span><span class='op'>&gt;</span>, <span class='ident'>PropertiesError</span><span class='op'>&gt;</span> {
+  <span class='kw'>let</span> <span class='kw-2'>mut</span> <span class='ident'>p</span> <span class='op'>=</span> <span class='ident'>PropertiesIter</span>::<span class='ident'>new</span>(<span class='ident'>input</span>);
+  <span class='kw'>let</span> <span class='kw-2'>mut</span> <span class='ident'>map</span> <span class='op'>=</span> <span class='ident'>HashMap</span>::<span class='ident'>new</span>();
+  <span class='macro'>try</span><span class='macro'>!</span>(<span class='ident'>p</span>.<span class='ident'>read_into</span>(<span class='op'>|</span><span class='ident'>k</span>, <span class='ident'>v</span><span class='op'>|</span> {
+    <span class='ident'>map</span>.<span class='ident'>insert</span>(<span class='ident'>k</span>, <span class='ident'>v</span>);
+  }));
+  <span class='prelude-val'>Ok</span>(<span class='ident'>map</span>)
 }
 
 <span class='comment'>/////////////////////</span>
