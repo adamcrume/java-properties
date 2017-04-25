@@ -157,7 +157,7 @@ impl<'a, R: Read> NaturalLines<'a, R> {
     }
   }
 
-  fn decode(&self, buf: &Vec<u8>) -> Result<NaturalLine, PropertiesError> {
+  fn decode(&self, buf: &[u8]) -> Result<NaturalLine, PropertiesError> {
     match self.encoding.decode(buf, DecoderTrap::Strict) {
       Ok(s) => Ok(NaturalLine(self.line_count, s)),
       Err(_) => Err(PropertiesError::new(&format!("Error reading {} encoding", self.encoding.name()), None, Some(self.line_count))),
