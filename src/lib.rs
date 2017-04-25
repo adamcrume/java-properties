@@ -498,8 +498,10 @@ impl<'a, R: Read> PropertiesIter<'a, R> {
     Self::new_with_encoding(input, ISO_8859_1)
   }
 
-  /// Parses properties from the given `Read` stream in the given encoding
-  pub fn new_with_encoding(input: R, encoding: &'a Encoding) -> Self {
+  /// Parses properties from the given `Read` stream in the given encoding.
+  /// Note that the Java properties specification specifies ISO-8859-1 encoding
+  /// for properties files; in most cases, `new` should be called instead.
+  pub fn new_with_encoding(input: R, encoding: Box<Encoding>) -> Self {
     PropertiesIter {
       lines: LogicalLines::new(NaturalLines::new(input, encoding)),
       parser: LineParser::new(),
