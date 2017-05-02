@@ -140,15 +140,15 @@ impl Display for PropertiesError {
 struct NaturalLine(usize, String);
 
 // We can't use BufRead.lines() because it doesn't use the proper line endings
-struct NaturalLines<'a, R: Read> {
+struct NaturalLines<R: Read> {
   bytes: Peekable<Bytes<R>>,
   eof: bool,
   line_count: usize,
-  encoding: &'a Encoding,
+  encoding: &'static Encoding,
 }
 
-impl<'a, R: Read> NaturalLines<'a, R> {
-  fn new(reader: R, encoding: &'a Encoding) -> Self {
+impl<R: Read> NaturalLines<R> {
+  fn new(reader: R, encoding: &'static Encoding) -> Self {
     NaturalLines {
       bytes: reader.bytes().peekable(),
       eof: false,
@@ -168,7 +168,7 @@ impl<'a, R: Read> NaturalLines<'a, R> {
 const LF: u8 = 10;
 const CR: u8 = 13;
 
-impl<'a, R: Read> Iterator for NaturalLines<'a, R> {
+impl<R: Read> Iterator for NaturalLines<R> {
   type Item = Result<NaturalLine, PropertiesError>;
 
   fn next(&mut self) -> Option<Self::Item> {
@@ -487,12 +487,12 @@ impl LineParser {
 ///
 /// For basic usage, see the crate-level documentation.
 /// Note that once `next` returns an error, the result of further calls is undefined.
-pub struct PropertiesIter<'a, R: Read> {
-  lines: LogicalLines<NaturalLines<'a, R>>,
+pub struct PropertiesIter<R: Read> {
+  lines: LogicalLines<NaturalLines<R>>,
   parser: LineParser,
 }
 
-impl<'a, R: Read> PropertiesIter<'a, R> {
+impl<R: Read> PropertiesIter<R> {
   /// Parses properties from the given `Read` stream.
   pub fn new(input: R) -> Self {
     Self::new_with_encoding(input, ISO_8859_1)
@@ -501,7 +501,7 @@ impl<'a, R: Read> PropertiesIter<'a, R> {
   /// Parses properties from the given `Read` stream in the given encoding.
   /// Note that the Java properties specification specifies ISO-8859-1 encoding
   /// for properties files; in most cases, `new` should be called instead.
-  pub fn new_with_encoding(input: R, encoding: Box<Encoding>) -> Self {
+  pub fn new_with_encoding(input: R, encoding: &'static Encoding) -> Self {
     PropertiesIter {
       lines: LogicalLines::new(NaturalLines::new(input, encoding)),
       parser: LineParser::new(),
@@ -541,7 +541,7 @@ impl<'a, R: Read> PropertiesIter<'a, R> {
 }
 
 /// Note that once `next` returns an error, the result of further calls is undefined.
-impl<'a, R: Read> Iterator for PropertiesIter<'a, R> {
+impl<R: Read> Iterator for PropertiesIter<R> {
   type Item = Result<Line, PropertiesError>;
 
   /// Returns the next line.
