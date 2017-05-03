@@ -10,5 +10,5 @@ license = "MIT"
 documentation = "https://adamcrume.github.io/java-properties"
 
 [dependencies]
-encoding = "^0.2.32"
-regex = "^0.1.47"
+encoding = "^0.2.33"
+regex = "^0.2.1"

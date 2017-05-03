@@ -462,12 +462,12 @@ impl LineParser {
 
   fn parse_line<'a>(&self, line: &'a str) -> Option<ParsedLine<'a>> {
     if let Some(c) = self.re.captures(line) {
-      if let Some((start, end)) = c.pos(1) {
-        Some(ParsedLine::Comment(&line[start..end]))
-      } else if let Some((kstart, kend)) = c.pos(2) {
-        let key = &line[kstart..kend];
-        if let Some((vstart, vend)) = c.pos(3) {
-          Some(ParsedLine::KVPair(key, &line[vstart..vend]))
+      if let Some(comment_match) = c.get(1) {
+        Some(ParsedLine::Comment(comment_match.as_str()))
+      } else if let Some(key_match) = c.get(2) {
+        let key = key_match.as_str();
+        if let Some(value_match) = c.get(3) {
+          Some(ParsedLine::KVPair(key, value_match.as_str()))
         } else if key != "" {
           Some(ParsedLine::KVPair(key, ""))
         } else {
