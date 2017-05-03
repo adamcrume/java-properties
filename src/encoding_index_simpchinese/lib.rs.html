@@ -9,6 +9,7 @@
 
     <title>lib.rs.html -- source</title>
 
+    <link rel="stylesheet" type="text/css" href="../../normalize.css">
     <link rel="stylesheet" type="text/css" href="../../rustdoc.css">
     <link rel="stylesheet" type="text/css" href="../../main.css">
     
@@ -75,39 +76,39 @@
 <span id="31">31</span>
 <span id="32">32</span>
 <span id="33">33</span>
-</pre><pre class='rust '>
-<span class='comment'>// This is a part of rust-encoding.</span>
-<span class='comment'>//</span>
-<span class='comment'>// Any copyright is dedicated to the Public Domain.</span>
-<span class='comment'>// https://creativecommons.org/publicdomain/zero/1.0/</span>
+</pre><pre class="rust ">
+<span class="comment">// This is a part of rust-encoding.</span>
+<span class="comment">//</span>
+<span class="comment">// Any copyright is dedicated to the Public Domain.</span>
+<span class="comment">// https://creativecommons.org/publicdomain/zero/1.0/</span>
 
-<span class='doccomment'>//! Simplified Chinese index tables for</span>
-<span class='doccomment'>//! [rust-encoding](https://github.com/lifthrasiir/rust-encoding).</span>
+<span class="doccomment">//! Simplified Chinese index tables for</span>
+<span class="doccomment">//! [rust-encoding](https://github.com/lifthrasiir/rust-encoding).</span>
 
-<span class='attribute'>#<span class='op'>!</span>[<span class='ident'>cfg_attr</span>(<span class='ident'>test</span>, <span class='ident'>feature</span>(<span class='ident'>test</span>))]</span>
+<span class="attribute">#<span class="op">!</span>[<span class="ident">cfg_attr</span>(<span class="ident">test</span>, <span class="ident">feature</span>(<span class="ident">test</span>))]</span>
 
-<span class='attribute'>#[<span class='ident'>cfg</span>(<span class='ident'>test</span>)]</span>
-<span class='attribute'>#[<span class='ident'>macro_use</span>]</span>
-<span class='kw'>extern</span> <span class='kw'>crate</span> <span class='ident'>encoding_index_tests</span>;
+<span class="attribute">#[<span class="ident">cfg</span>(<span class="ident">test</span>)]</span>
+<span class="attribute">#[<span class="ident">macro_use</span>]</span>
+<span class="kw">extern</span> <span class="kw">crate</span> <span class="ident">encoding_index_tests</span>;
 
-<span class='doccomment'>/// GB 18030 two-byte area.</span>
-<span class='doccomment'>///</span>
-<span class='doccomment'>/// From the Encoding Standard:</span>
-<span class='doccomment'>///</span>
-<span class='doccomment'>/// &gt; This matches the GB18030 standard for code points encoded as two bytes,</span>
-<span class='doccomment'>/// &gt; except `0xA3 0xA0` maps to U+3000 to be compatible with deployed content.</span>
-<span class='kw'>pub</span> <span class='kw'>mod</span> <span class='ident'>gb18030</span>;
+<span class="doccomment">/// GB 18030 two-byte area.</span>
+<span class="doccomment">///</span>
+<span class="doccomment">/// From the Encoding Standard:</span>
+<span class="doccomment">///</span>
+<span class="doccomment">/// &gt; This matches the GB18030 standard for code points encoded as two bytes,</span>
+<span class="doccomment">/// &gt; except `0xA3 0xA0` maps to U+3000 to be compatible with deployed content.</span>
+<span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">gb18030</span>;
 
-<span class='doccomment'>/// GB 18030 four-byte area.</span>
-<span class='doccomment'>///</span>
-<span class='doccomment'>/// From the Encoding Standard:</span>
-<span class='doccomment'>///</span>
-<span class='doccomment'>/// &gt; This index works different from all others.</span>
-<span class='doccomment'>/// &gt; Listing all code points would result in over a million items</span>
-<span class='doccomment'>/// &gt; whereas they can be represented neatly in 207 ranges combined with trivial limit checks.</span>
-<span class='doccomment'>/// &gt; It therefore only superficially matches the GB18030 standard</span>
-<span class='doccomment'>/// &gt; for code points encoded as four bytes.</span>
-<span class='kw'>pub</span> <span class='kw'>mod</span> <span class='ident'>gb18030_ranges</span>;
+<span class="doccomment">/// GB 18030 four-byte area.</span>
+<span class="doccomment">///</span>
+<span class="doccomment">/// From the Encoding Standard:</span>
+<span class="doccomment">///</span>
+<span class="doccomment">/// &gt; This index works different from all others.</span>
+<span class="doccomment">/// &gt; Listing all code points would result in over a million items</span>
+<span class="doccomment">/// &gt; whereas they can be represented neatly in 207 ranges combined with trivial limit checks.</span>
+<span class="doccomment">/// &gt; It therefore only superficially matches the GB18030 standard</span>
+<span class="doccomment">/// &gt; for code points encoded as four bytes.</span>
+<span class="kw">pub</span> <span class="kw">mod</span> <span class="ident">gb18030_ranges</span>;
 
 </pre>
 </section>
@@ -166,11 +167,9 @@
     <script>
         window.rootPath = "../../";
         window.currentCrate = "encoding_index_simpchinese";
-        window.playgroundUrl = "";
     </script>
     <script src="../../jquery.js"></script>
     <script src="../../main.js"></script>
-    
     <script defer src="../../search-index.js"></script>
 </body>
 </html>

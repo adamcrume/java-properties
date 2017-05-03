@@ -1,4 +1,5 @@
 (function() {var implementors = {};
+implementors["encoding"] = [];
 implementors['encoding'] = [];implementors['encoding'] = [];implementors["encoding"] = [];
 
             if (window.register_implementors) {

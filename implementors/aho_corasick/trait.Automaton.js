@@ -1,4 +1,5 @@
 (function() {var implementors = {};
+implementors["aho_corasick"] = [];
 implementors['aho_corasick'] = [];implementors['aho_corasick'] = [];implementors["aho_corasick"] = [];
 
             if (window.register_implementors) {
