@@ -26,30 +26,30 @@
 //! // Writing simple
 //! let mut src_map1 = HashMap::new();
 //! src_map1.insert("a".to_string(), "b".to_string());
-//! let mut f = try!(File::create(&file_name));
-//! try!(write(BufWriter::new(f), &src_map1));
+//! let mut f = File::create(&file_name)?;
+//! write(BufWriter::new(f), &src_map1)?;
 //!
 //! // Writing advanced
 //! let mut src_map2 = HashMap::new();
 //! src_map2.insert("a".to_string(), "b".to_string());
-//! let mut f = try!(File::create(&file_name));
+//! let mut f = File::create(&file_name)?;
 //! let mut writer = PropertiesWriter::new(BufWriter::new(f));
 //! for (k, v) in src_map2.iter() {
-//!   try!(writer.write(&k, &v));
+//!   writer.write(&k, &v)?;
 //! }
 //! writer.flush();
 //!
 //! // Reading simple
-//! let mut f2 = try!(File::open(&file_name));
-//! let dst_map1 = try!(read(BufReader::new(f2)));
+//! let mut f2 = File::open(&file_name)?;
+//! let dst_map1 = read(BufReader::new(f2))?;
 //! assert_eq!(src_map1, dst_map1);
 //!
 //! // Reading advanced
-//! let mut f = try!(File::open(&file_name));
+//! let mut f = File::open(&file_name)?;
 //! let mut dst_map2 = HashMap::new();
-//! try!(PropertiesIter::new(BufReader::new(f)).read_into(|k, v| {
+//! PropertiesIter::new(BufReader::new(f)).read_into(|k, v| {
 //!   dst_map2.insert(k, v);
-//! }));
+//! })?;
 //! assert_eq!(src_map2, dst_map2);
 //! # Ok(())
 //! # }
