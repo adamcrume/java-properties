@@ -144,14 +144,23 @@ struct NaturalLines<R: Read> {
   bytes: Peekable<Bytes<R>>,
   eof: bool,
   line_count: usize,
+  encoding: &'static Encoding,
 }
 
 impl<R: Read> NaturalLines<R> {
-  fn new(reader: R) -> Self {
+  fn new(reader: R, encoding: &'static Encoding) -> Self {
     NaturalLines {
       bytes: reader.bytes().peekable(),
       eof: false,
       line_count: 0,
+      encoding: encoding,
+    }
+  }
+
+  fn decode(&self, buf: &[u8]) -> Result<NaturalLine, PropertiesError> {
+    match self.encoding.decode(buf, DecoderTrap::Strict) {
+      Ok(s) => Ok(NaturalLine(self.line_count, s)),
+      Err(_) => Err(PropertiesError::new(&format!("Error reading {} encoding", self.encoding.name()), None, Some(self.line_count))),
     }
   }
 }
@@ -159,14 +168,14 @@ impl<R: Read> NaturalLines<R> {
 const LF: u8 = 10;
 const CR: u8 = 13;
 
-impl< R: Read> Iterator for NaturalLines<R> {
+impl<R: Read> Iterator for NaturalLines<R> {
   type Item = Result<NaturalLine, PropertiesError>;
 
   fn next(&mut self) -> Option<Self::Item> {
     if self.eof {
       return None;
     }
-    let mut buf = String::new();
+    let mut buf = Vec::new();
     loop {
       match self.bytes.next() {
         Some(r) => match r {
@@ -178,16 +187,13 @@ impl< R: Read> Iterator for NaturalLines<R> {
                   _ => (),
                 }
                 self.line_count += 1;
-                return Some(Ok(NaturalLine(self.line_count, buf)));
+                return Some(self.decode(&buf));
               },
               LF => {
                 self.line_count += 1;
-                return Some(Ok(NaturalLine(self.line_count, buf)));
+                return Some(self.decode(&buf));
               },
-              _ => match ISO_8859_1.decode(&[b], DecoderTrap::Strict) {
-                Ok(s) => buf.push_str(&s),
-                Err(_) => return Some(Err(PropertiesError::new("Error reading ISO-8859-1 encoding", None, Some(self.line_count)))),
-              },
+              _ => buf.push(b),
             };
           },
           Err(e) => return Some(Err(PropertiesError::new("I/O error", Some(Box::new(e)), Some(self.line_count + 1)))),
@@ -195,7 +201,7 @@ impl< R: Read> Iterator for NaturalLines<R> {
         None => {
           self.eof = true;
           self.line_count += 1;
-          return Some(Ok(NaturalLine(self.line_count, buf)));
+          return Some(self.decode(&buf));
         },
       }
     }
@@ -489,8 +495,15 @@ pub struct PropertiesIter<R: Read> {
 impl<R: Read> PropertiesIter<R> {
   /// Parses properties from the given `Read` stream.
   pub fn new(input: R) -> Self {
+    Self::new_with_encoding(input, ISO_8859_1)
+  }
+
+  /// Parses properties from the given `Read` stream in the given encoding.
+  /// Note that the Java properties specification specifies ISO-8859-1 encoding
+  /// for properties files; in most cases, `new` should be called instead.
+  pub fn new_with_encoding(input: R, encoding: &'static Encoding) -> Self {
     PropertiesIter {
-      lines: LogicalLines::new(NaturalLines::new(input)),
+      lines: LogicalLines::new(NaturalLines::new(input, encoding)),
       parser: LineParser::new(),
     }
   }
@@ -736,7 +749,7 @@ pub fn read<R: Read>(input: R) -> Result<HashMap<String, String>, PropertiesErro
 
 #[cfg(test)]
 mod tests {
-  use encoding::all::ISO_8859_1;
+  use encoding::all::{ISO_8859_1, UTF_8};
   use encoding::DecoderTrap;
   use encoding::Encoding;
   use std::io;
@@ -777,7 +790,7 @@ mod tests {
     ];
     for &(ref bytes, ref lines) in data.iter() {
       let reader = &bytes as &[u8];
-      let mut iter = NaturalLines::new(reader);
+      let mut iter = NaturalLines::new(reader, ISO_8859_1);
       let mut count = 1;
       for line in lines {
         match (line.to_string(), iter.next()) {
@@ -931,7 +944,9 @@ mod tests {
     fn mk_pair(line_no: usize, key: &str, value: &str) -> Line {
       Line::mk_pair(line_no, key.to_string(), value.to_string())
     }
-    let data = [
+    let data = vec![
+      (ISO_8859_1 as &Encoding,
+      vec![
       ("", vec![]),
       ("a=b", vec![mk_pair(1, "a", "b")]),
       ("a=\\#b", vec![mk_pair(1, "a", "#b")]),
@@ -946,20 +961,29 @@ mod tests {
         mk_comment(10, "comment4"),
       ]),
       ("a = b\\\n  c, d ", vec![mk_pair(1, "a", "bc, d")]),
-    ];
-    for &(input, ref lines) in data.iter() {
-      let mut iter = PropertiesIter::new(input.as_bytes());
-      for line in lines {
-        match (line, iter.next()) {
-          (ref e, Some(Ok(ref a))) => if e != &a {
-            panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input, e, a);
-          },
-          (e, a) => panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input, e, a),
+    ]),
+    (UTF_8 as &Encoding,
+    vec![
+      ("a=日本語\nb=Français", vec![
+        mk_pair(1, "a", "日本語"),
+        mk_pair(2, "b", "Français"),
+        ]),
+    ])];
+    for &(encoding, ref dataset) in data.iter() {
+      for &(input, ref lines) in dataset.iter() {
+        let mut iter = PropertiesIter::new_with_encoding(input.as_bytes(), encoding);
+        for line in lines {
+          match (line, iter.next()) {
+            (ref e, Some(Ok(ref a))) => if e != &a {
+              panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input, e, a);
+            },
+            (e, a) => panic!("Failure while processing {:?}.  Expected Some(Ok({:?})), but was {:?}", input, e, a),
+          }
         }
-      }
-      match iter.next() {
-        None => (),
-        a => panic!("Failure while processing {:?}.  Expected None, but was {:?}", input, a),
+        match iter.next() {
+          None => (),
+          a => panic!("Failure while processing {:?}.  Expected None, but was {:?}", input, a),
+        }
       }
     }
   }
