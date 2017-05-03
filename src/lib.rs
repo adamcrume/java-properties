@@ -160,7 +160,7 @@ impl<R: Read> NaturalLines<R> {
   fn decode(&self, buf: &[u8]) -> Result<NaturalLine, PropertiesError> {
     match self.encoding.decode(buf, DecoderTrap::Strict) {
       Ok(s) => Ok(NaturalLine(self.line_count, s)),
-      Err(_) => Err(PropertiesError::new(&format!("Error reading {} encoding", self.encoding.name()), None, Some(self.line_count))),
+      Err(e) => Err(PropertiesError::new(&format!("Error reading {} encoding: {}", self.encoding.name(), e), None, Some(self.line_count))),
     }
   }
 }
@@ -632,7 +632,7 @@ impl<W: Write> PropertiesWriter<W> {
     let data = ISO_8859_1.encode(comment, UNICODE_ESCAPE);
     match data {
       Ok(d) => try!(self.writer.write_all(&d)),
-      Err(_) => return Err(PropertiesError::new("Encoding error", None, Some(self.lines_written))),
+      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
     };
     try!(self.write_eol());
     Ok(())
@@ -659,7 +659,7 @@ impl<W: Write> PropertiesWriter<W> {
     }
     match ISO_8859_1.encode(&escaped, UNICODE_ESCAPE) {
       Ok(d) => try!(self.writer.write_all(&d)),
-      Err(_) => return Err(PropertiesError::new("Encoding error", None, Some(self.lines_written))),
+      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
     };
     Ok(())
   }
@@ -691,7 +691,7 @@ impl<W: Write> PropertiesWriter<W> {
     let data = ISO_8859_1.encode(prefix, UNICODE_ESCAPE);
     match data {
       Ok(bytes) => self.comment_prefix = bytes,
-      Err(_) => return Err(PropertiesError::new("Encoding error", None, None)),
+      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
     };
     Ok(())
   }
@@ -708,7 +708,7 @@ impl<W: Write> PropertiesWriter<W> {
     let data = ISO_8859_1.encode(separator, UNICODE_ESCAPE);
     match data {
       Ok(bytes) => self.kv_separator = bytes,
-      Err(_) => return Err(PropertiesError::new("Encoding error", None, None)),
+      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
     };
     Ok(())
   }
