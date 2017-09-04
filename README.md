@@ -6,8 +6,6 @@ Where the documentation is ambiguous or incomplete, behavior is based on the beh
 
 ## Example
 ```rust
-use java_properties::PropertiesIter;
-use java_properties::PropertiesWriter;
 use std::collections::HashMap;
 use std::env::temp_dir;
 use std::fs::File;
@@ -21,18 +19,11 @@ file_name.push("java-properties-test.properties");
 // Writing
 let mut map1 = HashMap::new();
 map1.insert("a".to_string(), "b".to_string());
-let mut f = try!(File::create(&file_name));
-let mut writer = PropertiesWriter::new(BufWriter::new(f));
-for (k, v) in map1.iter() {
-  try!(writer.write(&k, &v));
-}
-writer.flush();
+let mut f = File::create(&file_name)?;
+write(BufWriter::new(f), &map1)?;
 
 // Reading
-let mut f = try!(File::open(&file_name));
-let mut map2 = HashMap::new();
-try!(PropertiesIter::new(BufReader::new(f)).read_into(|k, v| {
-  map2.insert(k, v);
-}));
-assert_eq!(map1, map2);
+let mut f = File::open(&file_name)?;
+let map2 = read(BufReader::new(f))?;
+assert_eq!(src_map1, dst_map1);
 ```
