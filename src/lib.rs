@@ -435,6 +435,7 @@ impl LineParser {
         [\x23!] # start of comment (# or !)
         [\x20\t\r\n\x0c]* # ignorable whitespace
         (.*?) # comment text
+        [\x20\t\r\n\x0c]* # ignorable whitespace
       |
         (
           (?:[^\\:=\x20\t\r\n\x0c]|\\.)* # key
@@ -452,7 +453,6 @@ impl LineParser {
           )
         )?
       )
-      [\x20\t\r\n\x0c]* # ignorable whitespace
       $
     ";
     LineParser {
@@ -888,7 +888,7 @@ mod tests {
       ("a = b", Some(ParsedLine::KVPair("a", "b"))),
       ("a : b", Some(ParsedLine::KVPair("a", "b"))),
       ("a b", Some(ParsedLine::KVPair("a", "b"))),
-      (" a = b", Some(ParsedLine::KVPair("a", "b"))),
+      (" a = b ", Some(ParsedLine::KVPair("a", "b "))),
       (" a : b", Some(ParsedLine::KVPair("a", "b"))),
       (" a b", Some(ParsedLine::KVPair("a", "b"))),
       ("a:=b", Some(ParsedLine::KVPair("a", "=b"))),
@@ -899,6 +899,9 @@ mod tests {
       ("a\\\\ \\\\:\\\\=b c", Some(ParsedLine::KVPair("a\\\\", "\\\\:\\\\=b c"))),
       ("\\  b", Some(ParsedLine::KVPair("\\ ", "b"))),
       ("=", Some(ParsedLine::KVPair("", ""))),
+      ("=x", Some(ParsedLine::KVPair("", "x"))),
+      ("x=", Some(ParsedLine::KVPair("x", ""))),
+      ("\\=x", Some(ParsedLine::KVPair("\\=x", ""))),
       ("\u{1F41E}=\u{1F41E}", Some(ParsedLine::KVPair("\u{1F41E}", "\u{1F41E}"))),
     ];
     let splitter = super::LineParser::new();
@@ -960,7 +963,8 @@ mod tests {
         mk_pair(7, "i", "j#comment3"),
         mk_comment(10, "comment4"),
       ]),
-      ("a = b\\\n  c, d ", vec![mk_pair(1, "a", "bc, d")]),
+      ("a = b\\\n  c, d ", vec![mk_pair(1, "a", "bc, d ")]),
+      ("x=\\\\\\\nty", vec![mk_pair(1, "x", "\\ty")]),
     ]),
     (UTF_8 as &Encoding,
     vec![
