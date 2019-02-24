@@ -57,9 +57,6 @@
 //! # }
 //! ```
 
-extern crate encoding;
-extern crate regex;
-
 use encoding::ByteWriter;
 use encoding::EncoderTrap;
 use encoding::Encoding;
@@ -86,12 +83,12 @@ use std::ops::Deref;
 #[derive(Debug)]
 pub struct PropertiesError {
   description: String,
-  cause: Option<Box<Error>>,
+  cause: Option<Box<dyn Error>>,
   line_number: Option<usize>,
 }
 
 impl PropertiesError {
-  fn new(description: &str, cause: Option<Box<Error>>, line_number: Option<usize>) -> Self {
+  fn new(description: &str, cause: Option<Box<dyn Error>>, line_number: Option<usize>) -> Self {
     PropertiesError {
       description: description.to_string(),
       cause: cause,
@@ -110,7 +107,7 @@ impl Error for PropertiesError {
     &self.description
   }
 
-  fn cause(&self) -> Option<&Error> {
+  fn cause(&self) -> Option<&dyn Error> {
     match self.cause {
       Some(ref c) => Some(c.deref()),
       None => None,
@@ -125,8 +122,8 @@ impl From<io::Error> for PropertiesError {
 }
 
 impl Display for PropertiesError {
-  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-    try!(write!(f, "{}", &self.description));
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", &self.description)?;
     match self.line_number {
       Some(n) => write!(f, " (line_number = {})", n),
       None => write!(f, " (line_number = unknown)"),
@@ -144,11 +141,11 @@ struct NaturalLines<R: Read> {
   bytes: Peekable<Bytes<R>>,
   eof: bool,
   line_count: usize,
-  encoding: &'static Encoding,
+  encoding: &'static dyn Encoding,
 }
 
 impl<R: Read> NaturalLines<R> {
-  fn new(reader: R, encoding: &'static Encoding) -> Self {
+  fn new(reader: R, encoding: &'static dyn Encoding) -> Self {
     NaturalLines {
       bytes: reader.bytes().peekable(),
       eof: false,
@@ -343,7 +340,7 @@ impl Into<LineContent> for Line {
 }
 
 impl Display for Line {
-  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     write!(f, "Line {{line_number: {}, content: {}}}", self.line_number, self.data)
   }
 }
@@ -359,7 +356,7 @@ pub enum LineContent {
 }
 
 impl Display for LineContent {
-  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     match self {
       &LineContent::Comment(ref s) => write!(f, "Comment({:?})", s),
       &LineContent::KVPair(ref k, ref v) => write!(f, "KVPair({:?}, {:?})", k, v),
@@ -501,7 +498,7 @@ impl<R: Read> PropertiesIter<R> {
   /// Parses properties from the given `Read` stream in the given encoding.
   /// Note that the Java properties specification specifies ISO-8859-1 encoding
   /// for properties files; in most cases, `new` should be called instead.
-  pub fn new_with_encoding(input: R, encoding: &'static Encoding) -> Self {
+  pub fn new_with_encoding(input: R, encoding: &'static dyn Encoding) -> Self {
     PropertiesIter {
       lines: LogicalLines::new(NaturalLines::new(input, encoding)),
       parser: LineParser::new(),
@@ -515,7 +512,7 @@ impl<R: Read> PropertiesIter<R> {
   /// Note that `f` may have already been called at this point.
   pub fn read_into<F: FnMut(String, String)>(&mut self, mut f: F) -> Result<(), PropertiesError> {
     for line in self {
-      match try!(line).data {
+      match line?.data {
         LineContent::KVPair(key, value) => {
            f(key, value);
         },
@@ -525,15 +522,15 @@ impl<R: Read> PropertiesIter<R> {
     Ok(())
   }
 
-  fn parsed_line_to_line(&self, parsed_line: ParsedLine, line_number: usize) -> Result<Line, PropertiesError> {
+  fn parsed_line_to_line(&self, parsed_line: ParsedLine<'_>, line_number: usize) -> Result<Line, PropertiesError> {
     Ok(match parsed_line {
       ParsedLine::Comment(c) => {
-        let comment = try!(unescape(c, line_number));
+        let comment = unescape(c, line_number)?;
         Line::mk_comment(line_number, comment)
       },
       ParsedLine::KVPair(k, v) => {
-        let key = try!(unescape(k, line_number));
-        let value = try!(unescape(v, line_number));
+        let key = unescape(k, line_number)?;
+        let value = unescape(v, line_number)?;
         Line::mk_pair(line_number, key, value)
       },
     })
@@ -565,7 +562,7 @@ impl<R: Read> Iterator for PropertiesIter<R> {
 
 /////////////////////
 
-fn unicode_escape(_encoder: &mut RawEncoder, input: &str, output: &mut ByteWriter) -> bool {
+fn unicode_escape(_encoder: &mut dyn RawEncoder, input: &str, output: &mut dyn ByteWriter) -> bool {
   let escapes: Vec<String> = input.chars().map(|ch| format!("\\u{:x}", ch as isize)).collect();
   let escapes = escapes.concat();
   output.write_bytes(escapes.as_bytes());
@@ -586,7 +583,7 @@ pub enum LineEnding {
 }
 
 impl Display for LineEnding {
-  fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     match self {
       &LineEnding::CR => f.write_str("LineEnding::CR"),
       &LineEnding::LF => f.write_str("LineEnding::LF"),
@@ -617,24 +614,24 @@ impl<W: Write> PropertiesWriter<W> {
   }
 
   fn write_eol(&mut self) -> Result<(), PropertiesError> {
-    try!(match self.line_ending {
+    match self.line_ending {
       LineEnding::CR => self.writer.write_all(&['\r' as u8]),
       LineEnding::LF => self.writer.write_all(&['\n' as u8]),
       LineEnding::CRLF => self.writer.write_all(&['\r' as u8, '\n' as u8]),
-    });
+    }?;
     Ok(())
   }
 
   /// Writes a comment to the file.
   pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
     self.lines_written += 1;
-    try!(self.writer.write_all(&self.comment_prefix));
+    self.writer.write_all(&self.comment_prefix)?;
     let data = ISO_8859_1.encode(comment, UNICODE_ESCAPE);
     match data {
-      Ok(d) => try!(self.writer.write_all(&d)),
+      Ok(d) => self.writer.write_all(&d)?,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
     };
-    try!(self.write_eol());
+    self.write_eol()?;
     Ok(())
   }
 
@@ -658,7 +655,7 @@ impl<W: Write> PropertiesWriter<W> {
       }
     }
     match ISO_8859_1.encode(&escaped, UNICODE_ESCAPE) {
-      Ok(d) => try!(self.writer.write_all(&d)),
+      Ok(d) => self.writer.write_all(&d)?,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
     };
     Ok(())
@@ -666,16 +663,16 @@ impl<W: Write> PropertiesWriter<W> {
 
   /// Writes a key/value pair to the file.
   pub fn write(&mut self, key: &str, value: &str) -> Result<(), PropertiesError> {
-    try!(self.write_escaped(key));
-    try!(self.writer.write_all(&self.kv_separator));
-    try!(self.write_escaped(value));
-    try!(self.write_eol());
+    self.write_escaped(key)?;
+    self.writer.write_all(&self.kv_separator)?;
+    self.write_escaped(value)?;
+    self.write_eol()?;
     Ok(())
   }
 
   /// Flushes the underlying stream.
   pub fn flush(&mut self) -> Result<(), PropertiesError> {
-    try!(self.writer.flush());
+    self.writer.flush()?;
     Ok(())
   }
 
@@ -727,9 +724,9 @@ impl<W: Write> PropertiesWriter<W> {
 pub fn write<W: Write>(writer: W, map: &HashMap<String, String>) -> Result<(), PropertiesError> {
   let mut writer = PropertiesWriter::new(writer);
   for (k, v) in map.iter() {
-    try!(writer.write(&k, &v));
+    writer.write(&k, &v)?;
   }
-  try!(writer.flush());
+  writer.flush()?;
   Ok(())
 }
 
@@ -739,9 +736,9 @@ pub fn write<W: Write>(writer: W, map: &HashMap<String, String>) -> Result<(), P
 pub fn read<R: Read>(input: R) -> Result<HashMap<String, String>, PropertiesError> {
   let mut p = PropertiesIter::new(input);
   let mut map = HashMap::new();
-  try!(p.read_into(|k, v| {
+  p.read_into(|k, v| {
     map.insert(k, v);
-  }));
+  })?;
   Ok(map)
 }
 
@@ -948,7 +945,7 @@ mod tests {
       Line::mk_pair(line_no, key.to_string(), value.to_string())
     }
     let data = vec![
-      (ISO_8859_1 as &Encoding,
+      (ISO_8859_1 as &dyn Encoding,
       vec![
       ("", vec![]),
       ("a=b", vec![mk_pair(1, "a", "b")]),
@@ -966,7 +963,7 @@ mod tests {
       ("a = b\\\n  c, d ", vec![mk_pair(1, "a", "bc, d ")]),
       ("x=\\\\\\\nty", vec![mk_pair(1, "x", "\\ty")]),
     ]),
-    (UTF_8 as &Encoding,
+    (UTF_8 as &dyn Encoding,
     vec![
       ("a=日本語\nb=Français", vec![
         mk_pair(1, "a", "日本語"),

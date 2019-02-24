@@ -8,6 +8,7 @@ readme = "README.md"
 repository = "https://github.com/adamcrume/java-properties"
 license = "MIT"
 documentation = "https://adamcrume.github.io/java-properties"
+edition = "2018"
 
 [dependencies]
 encoding = "0.2.33"
