@@ -299,7 +299,7 @@ enum ParsedLine<'a> {
 }
 
 /// A line read from a properties file.
-#[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
+#[derive(PartialEq,Eq,PartialOrd,Ord,Debug,Clone,Hash)]
 pub struct Line {
   line_number: usize,
   data: LineContent,
@@ -349,7 +349,7 @@ impl Display for Line {
 }
 
 /// Parsed content of the line.
-#[derive(PartialEq,Eq,PartialOrd,Ord,Debug)]
+#[derive(PartialEq,Eq,PartialOrd,Ord,Debug,Clone,Hash)]
 pub enum LineContent {
   /// Content of a comment line.
   Comment(String),
@@ -575,7 +575,7 @@ fn unicode_escape(_encoder: &mut RawEncoder, input: &str, output: &mut ByteWrite
 static UNICODE_ESCAPE: EncoderTrap = EncoderTrap::Call(unicode_escape);
 
 /// A line ending style allowed in a Java properties file.
-#[derive(PartialEq,Eq,PartialOrd,Ord,Debug,Copy,Clone)]
+#[derive(PartialEq,Eq,PartialOrd,Ord,Debug,Copy,Clone,Hash)]
 pub enum LineEnding {
   /// Carriage return alone.
   CR,
