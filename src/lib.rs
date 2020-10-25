@@ -83,12 +83,12 @@ use std::ops::Deref;
 #[derive(Debug)]
 pub struct PropertiesError {
   description: String,
-  cause: Option<Box<dyn Error>>,
+  cause: Option<Box<dyn Error + 'static>>,
   line_number: Option<usize>,
 }
 
 impl PropertiesError {
-  fn new(description: &str, cause: Option<Box<dyn Error>>, line_number: Option<usize>) -> Self {
+  fn new(description: &str, cause: Option<Box<dyn Error + 'static>>, line_number: Option<usize>) -> Self {
     PropertiesError {
       description: description.to_string(),
       cause: cause,
@@ -107,7 +107,7 @@ impl Error for PropertiesError {
     &self.description
   }
 
-  fn cause(&self) -> Option<&dyn Error> {
+  fn source(&self) -> Option<&(dyn Error + 'static)> {
     match self.cause {
       Some(ref c) => Some(c.deref()),
       None => None,
