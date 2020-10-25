@@ -18,8 +18,7 @@
 //! use std::io::BufWriter;
 //! use std::io::prelude::*;
 //!
-//! # fn main() {
-//! # fn foo() -> std::result::Result<(), java_properties::PropertiesError> {
+//! # fn main() -> std::result::Result<(), java_properties::PropertiesError> {
 //! let mut file_name = temp_dir();
 //! file_name.push("java-properties-test.properties");
 //!
@@ -34,7 +33,7 @@
 //! src_map2.insert("a".to_string(), "b".to_string());
 //! let mut f = File::create(&file_name)?;
 //! let mut writer = PropertiesWriter::new(BufWriter::new(f));
-//! for (k, v) in src_map2.iter() {
+//! for (k, v) in &src_map2 {
 //!   writer.write(&k, &v)?;
 //! }
 //! writer.flush();
@@ -53,8 +52,6 @@
 //! assert_eq!(src_map2, dst_map2);
 //! # Ok(())
 //! # }
-//! # foo().unwrap();
-//! # }
 //! ```
 
 use encoding::ByteWriter;
@@ -63,6 +60,7 @@ use encoding::Encoding;
 use encoding::DecoderTrap;
 use encoding::RawEncoder;
 use encoding::all::ISO_8859_1;
+use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
 use std::convert::From;
@@ -91,8 +89,8 @@ impl PropertiesError {
   fn new(description: &str, cause: Option<Box<dyn Error + 'static>>, line_number: Option<usize>) -> Self {
     PropertiesError {
       description: description.to_string(),
-      cause: cause,
-      line_number: line_number,
+      cause,
+      line_number,
     }
   }
 
@@ -150,7 +148,7 @@ impl<R: Read> NaturalLines<R> {
       bytes: reader.bytes().peekable(),
       eof: false,
       line_count: 0,
-      encoding: encoding,
+      encoding,
     }
   }
 
@@ -162,8 +160,8 @@ impl<R: Read> NaturalLines<R> {
   }
 }
 
-const LF: u8 = 10;
-const CR: u8 = 13;
+const LF: u8 = b'\n';
+const CR: u8 = b'\r';
 
 impl<R: Read> Iterator for NaturalLines<R> {
   type Item = Result<NaturalLine, PropertiesError>;
@@ -175,26 +173,19 @@ impl<R: Read> Iterator for NaturalLines<R> {
     let mut buf = Vec::new();
     loop {
       match self.bytes.next() {
-        Some(r) => match r {
-          Ok(b) => {
-            match b {
-              CR => {
-                match self.bytes.peek() {
-                  Some(&Ok(LF)) => { self.bytes.next(); },
-                  _ => (),
-                }
-                self.line_count += 1;
-                return Some(self.decode(&buf));
-              },
-              LF => {
-                self.line_count += 1;
-                return Some(self.decode(&buf));
-              },
-              _ => buf.push(b),
-            };
-          },
-          Err(e) => return Some(Err(PropertiesError::new("I/O error", Some(Box::new(e)), Some(self.line_count + 1)))),
+        Some(Ok(CR)) => {
+            if let Some(&Ok(LF)) = self.bytes.peek() {
+              self.bytes.next();
+            }
+            self.line_count += 1;
+            return Some(self.decode(&buf));
         },
+        Some(Ok(LF)) => {
+            self.line_count += 1;
+            return Some(self.decode(&buf));
+        },
+        Some(Ok(b)) => buf.push(b),
+        Some(Err(e)) => return Some(Err(PropertiesError::new("I/O error", Some(Box::new(e)), Some(self.line_count + 1)))),
         None => {
           self.eof = true;
           self.line_count += 1;
@@ -213,27 +204,24 @@ struct LogicalLine(usize, String);
 struct LogicalLines<I: Iterator<Item=Result<NaturalLine, PropertiesError>>> {
   physical_lines: I,
   eof: bool,
-  comment_re: Regex,
 }
 
 impl<I: Iterator<Item=Result<NaturalLine, PropertiesError>>> LogicalLines<I> {
   fn new(physical_lines: I) -> Self {
     LogicalLines {
-      physical_lines: physical_lines,
+      physical_lines,
       eof: false,
-      comment_re: Regex::new("^[ \t\r\n\x0c]*[#!]").unwrap(),
     }
   }
 }
 
 fn count_ending_backslashes(s: &str) -> usize {
-  let chars: Vec<char> = s.chars().collect();
-  let n = chars.len();
-  let mut i = n;
-  while i > 0 {
-    i -= 1;
-    if chars[i] != '\\' {
-      return n - 1 - i;
+  let mut n = 0;
+  for c in s.chars() {
+    if c == '\\' {
+      n += 1;
+    } else {
+      n = 0;
     }
   }
   n
@@ -260,10 +248,13 @@ impl<I: Iterator<Item=Result<NaturalLine, PropertiesError>>> Iterator for Logica
             if first {
               &line
             } else {
-              line.trim_left()
+              line.trim_start()
             }
           );
-          if first && self.comment_re.is_match(&line) {
+          lazy_static! {
+            static ref COMMENT_RE: Regex = Regex::new("^[ \t\r\n\x0c]*[#!]").unwrap();
+          }
+          if first && COMMENT_RE.is_match(&line) {
             // This format is terrible.  We can't throw out comment lines before joining natural lines, because "a\\\n#b" should be joined into "a#b".
             // On the other hand, we can't join natural lines before processing comments, because "#a\\\nb" should stay as two lines, "#a\\" and "b".
             // Processing line joins and comments are inextricably linked.
@@ -318,16 +309,16 @@ impl Line {
     self.data
   }
 
-  fn mk_pair(line_no: usize, key: String, value: String) -> Line {
+  fn mk_pair(line_number: usize, key: String, value: String) -> Line {
     Line {
-      line_number: line_no,
+      line_number,
       data: LineContent::KVPair(key, value),
     }
   }
 
-  fn mk_comment(line_no: usize, text: String) -> Line {
+  fn mk_comment(line_number: usize, text: String) -> Line {
     Line {
-      line_number: line_no,
+      line_number,
       data: LineContent::Comment(text),
     }
   }
@@ -418,14 +409,9 @@ fn unescape(s: &str, line_number: usize) -> Result<String, PropertiesError> {
   Ok(buf)
 }
 
-struct LineParser {
-  re: Regex,
-}
-
-impl LineParser {
-  fn new() -> Self {
-    // Note that we have to use \x20 to match a space and \x23 to match a pound character since we're ignoring whitespace and comments
-    let re_str = r"(?x) # allow whitespace and comments
+lazy_static! {
+  // Note that we have to use \x20 to match a space and \x23 to match a pound character since we're ignoring whitespace and comments
+  static ref LINE_RE: Regex = Regex::new(r"(?x) # allow whitespace and comments
       ^
       [\x20\t\r\n\x0c]* # ignorable whitespace
       (?:
@@ -451,32 +437,28 @@ impl LineParser {
         )?
       )
       $
-    ";
-    LineParser {
-      re: Regex::new(re_str).unwrap(),
-    }
-  }
+    ").unwrap();
+}
 
-  fn parse_line<'a>(&self, line: &'a str) -> Option<ParsedLine<'a>> {
-    if let Some(c) = self.re.captures(line) {
-      if let Some(comment_match) = c.get(1) {
-        Some(ParsedLine::Comment(comment_match.as_str()))
-      } else if let Some(key_match) = c.get(2) {
-        let key = key_match.as_str();
-        if let Some(value_match) = c.get(3) {
-          Some(ParsedLine::KVPair(key, value_match.as_str()))
-        } else if key != "" {
-          Some(ParsedLine::KVPair(key, ""))
-        } else {
-          None
-        }
+fn parse_line<'a>(line: &'a str) -> Option<ParsedLine<'a>> {
+  if let Some(c) = LINE_RE.captures(line) {
+    if let Some(comment_match) = c.get(1) {
+      Some(ParsedLine::Comment(comment_match.as_str()))
+    } else if let Some(key_match) = c.get(2) {
+      let key = key_match.as_str();
+      if let Some(value_match) = c.get(3) {
+        Some(ParsedLine::KVPair(key, value_match.as_str()))
+      } else if key != "" {
+        Some(ParsedLine::KVPair(key, ""))
       } else {
-        panic!("Failed to get any groups out of the regular expression.")
+        None
       }
     } else {
-      // This should never happen.  The pattern should match all strings.
-      panic!("Failed to match on {:?}", line);
+      panic!("Failed to get any groups out of the regular expression.")
     }
+  } else {
+    // This should never happen.  The pattern should match all strings.
+    panic!("Failed to match on {:?}", line);
   }
 }
 
@@ -486,7 +468,6 @@ impl LineParser {
 /// Note that once `next` returns an error, the result of further calls is undefined.
 pub struct PropertiesIter<R: Read> {
   lines: LogicalLines<NaturalLines<R>>,
-  parser: LineParser,
 }
 
 impl<R: Read> PropertiesIter<R> {
@@ -501,7 +482,6 @@ impl<R: Read> PropertiesIter<R> {
   pub fn new_with_encoding(input: R, encoding: &'static dyn Encoding) -> Self {
     PropertiesIter {
       lines: LogicalLines::new(NaturalLines::new(input, encoding)),
-      parser: LineParser::new(),
     }
   }
 
@@ -512,11 +492,8 @@ impl<R: Read> PropertiesIter<R> {
   /// Note that `f` may have already been called at this point.
   pub fn read_into<F: FnMut(String, String)>(&mut self, mut f: F) -> Result<(), PropertiesError> {
     for line in self {
-      match line?.data {
-        LineContent::KVPair(key, value) => {
-           f(key, value);
-        },
-        LineContent::Comment(_) => (),
+      if let LineContent::KVPair(key, value) = line?.data {
+        f(key, value);
       }
     }
     Ok(())
@@ -547,13 +524,11 @@ impl<R: Read> Iterator for PropertiesIter<R> {
   fn next(&mut self) -> Option<Self::Item> {
     loop {
       match self.lines.next() {
-        Some(maybe_line) => match maybe_line {
-          Ok(LogicalLine(line_no, line)) => match self.parser.parse_line(&line) {
-            Some(parsed_line) => {return Some(self.parsed_line_to_line(parsed_line, line_no));},
-            None => (), // empty line, continue
-          },
-          Err(e) => return Some(Err(e)),
+        Some(Ok(LogicalLine(line_no, line))) => match parse_line(&line) {
+          Some(parsed_line) => return Some(self.parsed_line_to_line(parsed_line, line_no)),
+          None => (), // empty line, continue
         },
+        Some(Err(e)) => return Some(Err(e)),
         None => return None,
       }
     }
@@ -584,11 +559,11 @@ pub enum LineEnding {
 
 impl Display for LineEnding {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    match self {
-      &LineEnding::CR => f.write_str("LineEnding::CR"),
-      &LineEnding::LF => f.write_str("LineEnding::LF"),
-      &LineEnding::CRLF => f.write_str("LineEnding::CRLF"),
-    }
+    f.write_str(match self {
+      &LineEnding::CR => "LineEnding::CR",
+      &LineEnding::LF => "LineEnding::LF",
+      &LineEnding::CRLF => "LineEnding::CRLF",
+    })
   }
 }
 
@@ -605,20 +580,20 @@ impl<W: Write> PropertiesWriter<W> {
   /// Writes to the given `Write` stream.
   pub fn new(writer: W) -> Self {
     PropertiesWriter {
-      writer: writer,
+      writer,
       lines_written: 0,
-      comment_prefix: vec!['#' as u8, ' ' as u8],
-      kv_separator: vec!['=' as u8],
+      comment_prefix: vec![b'#', b' '],
+      kv_separator: vec![b'='],
       line_ending: LineEnding::LF,
     }
   }
 
   fn write_eol(&mut self) -> Result<(), PropertiesError> {
-    match self.line_ending {
-      LineEnding::CR => self.writer.write_all(&['\r' as u8]),
-      LineEnding::LF => self.writer.write_all(&['\n' as u8]),
-      LineEnding::CRLF => self.writer.write_all(&['\r' as u8, '\n' as u8]),
-    }?;
+    self.writer.write_all(match self.line_ending {
+      LineEnding::CR => &[b'\r'],
+      LineEnding::LF => &[b'\n'],
+      LineEnding::CRLF => &[b'\r', b'\n'],
+    })?;
     Ok(())
   }
 
@@ -626,8 +601,7 @@ impl<W: Write> PropertiesWriter<W> {
   pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
     self.lines_written += 1;
     self.writer.write_all(&self.comment_prefix)?;
-    let data = ISO_8859_1.encode(comment, UNICODE_ESCAPE);
-    match data {
+    match ISO_8859_1.encode(comment, UNICODE_ESCAPE) {
       Ok(d) => self.writer.write_all(&d)?,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
     };
@@ -681,12 +655,13 @@ impl<W: Write> PropertiesWriter<W> {
   /// The prefix must contain a '#' or a '!', may only contain spaces, tabs, or form feeds before the comment character,
   /// and may not contain any carriage returns or line feeds ('\r' or '\n').
   pub fn set_comment_prefix(&mut self, prefix: &str) -> Result<(), PropertiesError> {
-    let re = Regex::new(r"^[ \t\x0c]*[#!][^\r\n]*$").unwrap();
-    if !re.is_match(prefix) {
+    lazy_static! {
+      static ref RE: Regex = Regex::new(r"^[ \t\x0c]*[#!][^\r\n]*$").unwrap();
+    }
+    if !RE.is_match(prefix) {
       return Err(PropertiesError::new(&format!("Bad comment prefix: {:?}", prefix), None, None));
     }
-    let data = ISO_8859_1.encode(prefix, UNICODE_ESCAPE);
-    match data {
+    match ISO_8859_1.encode(prefix, UNICODE_ESCAPE) {
       Ok(bytes) => self.comment_prefix = bytes,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
     };
@@ -698,12 +673,13 @@ impl<W: Write> PropertiesWriter<W> {
   /// The separator may be non-empty whitespace, or a colon with optional whitespace on either side,
   /// or an equals sign with optional whitespace on either side.  (Whitespace here means ' ', '\t', or '\f'.)
   pub fn set_kv_separator(&mut self, separator: &str) -> Result<(), PropertiesError> {
-    let re = Regex::new(r"^([ \t\x0c]*[:=][ \t\x0c]*|[ \t\x0c]+)$").unwrap();
-    if !re.is_match(separator) {
+    lazy_static! {
+      static ref RE: Regex = Regex::new(r"^([ \t\x0c]*[:=][ \t\x0c]*|[ \t\x0c]+)$").unwrap();
+    }
+    if !RE.is_match(separator) {
       return Err(PropertiesError::new(&format!("Bad key/value separator: {:?}", separator), None, None));
     }
-    let data = ISO_8859_1.encode(separator, UNICODE_ESCAPE);
-    match data {
+    match ISO_8859_1.encode(separator, UNICODE_ESCAPE) {
       Ok(bytes) => self.kv_separator = bytes,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
     };
@@ -723,7 +699,7 @@ impl<W: Write> PropertiesWriter<W> {
 /// For more advanced use cases, use `PropertiesWriter`.
 pub fn write<W: Write>(writer: W, map: &HashMap<String, String>) -> Result<(), PropertiesError> {
   let mut writer = PropertiesWriter::new(writer);
-  for (k, v) in map.iter() {
+  for (k, v) in map {
     writer.write(&k, &v)?;
   }
   writer.flush()?;
@@ -765,7 +741,7 @@ mod tests {
   use super::PropertiesIter;
   use super::PropertiesWriter;
 
-  const SP: u8 = 32; // space
+  const SP: u8 = b' '; // space
 
   #[test]
   fn natural_lines() {
@@ -785,7 +761,7 @@ mod tests {
       (vec![LF, SP], vec!["", " "]),
       (vec![CR, LF, SP], vec!["", " "]),
     ];
-    for &(ref bytes, ref lines) in data.iter() {
+    for &(ref bytes, ref lines) in &data {
       let reader = &bytes as &[u8];
       let mut iter = NaturalLines::new(reader, ISO_8859_1);
       let mut count = 1;
@@ -820,7 +796,7 @@ mod tests {
       (vec!["\u{1F41E}\\", "\u{1F41E}"], vec!["\u{1F41E}\u{1F41E}"]),
       (vec!["\u{1F41E}\\", " \u{1F41E}"], vec!["\u{1F41E}\u{1F41E}"]),
     ];
-    for &(ref input_lines, ref lines) in data.iter() {
+    for &(ref input_lines, ref lines) in &data {
       let mut count = 0;
       let mut iter = LogicalLines::new(input_lines.iter().map(|x| {
           count += 1;
@@ -901,9 +877,8 @@ mod tests {
       ("\\=x", Some(ParsedLine::KVPair("\\=x", ""))),
       ("\u{1F41E}=\u{1F41E}", Some(ParsedLine::KVPair("\u{1F41E}", "\u{1F41E}"))),
     ];
-    let splitter = super::LineParser::new();
-    for &(line, ref expected) in data.iter() {
-      let actual = splitter.parse_line(line);
+    for &(line, ref expected) in &data {
+      let actual = super::parse_line(line);
       if expected != &actual {
         panic!("Failed when splitting {:?}.  Expected {:?} but got {:?}", line, expected, actual);
       }
@@ -923,7 +898,7 @@ mod tests {
       (r"\u", None),
       (r"\uasfd", None),
     ];
-    for &(input, expected) in data.iter() {
+    for &(input, expected) in &data {
       let actual = &super::unescape(input, 1);
       let is_match = match (expected, actual) {
         (Some(e), &Ok(ref a)) => e == a,
@@ -970,8 +945,8 @@ mod tests {
         mk_pair(2, "b", "Français"),
         ]),
     ])];
-    for &(encoding, ref dataset) in data.iter() {
-      for &(input, ref lines) in dataset.iter() {
+    for &(encoding, ref dataset) in &data {
+      for &(input, ref lines) in dataset {
         let mut iter = PropertiesIter::new_with_encoding(input.as_bytes(), encoding);
         for line in lines {
           match (line, iter.next()) {
@@ -998,7 +973,7 @@ mod tests {
       ("!", "#", "\\!=\\#\n"),
       ("\u{1F41E}", "\u{1F41E}", "\\u1f41e=\\u1f41e\n"),
     ];
-    for &(key, value, expected) in data.iter() {
+    for &(key, value, expected) in &data {
       let mut buf = Vec::new();
       {
         let mut writer = PropertiesWriter::new(&mut buf);
@@ -1023,7 +998,7 @@ mod tests {
       (" :=", "#  :=\n"),
       ("\u{1F41E}", "# \\u1f41e\n"),
     ];
-    for &(comment, expected) in data.iter() {
+    for &(comment, expected) in &data {
       let mut buf = Vec::new();
       {
         let mut writer = PropertiesWriter::new(&mut buf);
@@ -1044,7 +1019,7 @@ mod tests {
   fn properties_writer_good_comment_prefix() {
     let prefixes = ["#", "!", " #", " !", "#x", "!x", "\x0c#"];
     let mut buf = Vec::new();
-    for prefix in prefixes.iter() {
+    for prefix in &prefixes {
       let mut writer = PropertiesWriter::new(&mut buf);
       writer.set_comment_prefix(prefix).unwrap();
     }
@@ -1054,7 +1029,7 @@ mod tests {
   fn properties_writer_bad_comment_prefix() {
     let prefixes = ["", " ", "x", "\n#", "#\n", "#\r"];
     let mut buf = Vec::new();
-    for prefix in prefixes.iter() {
+    for prefix in &prefixes {
       let mut writer = PropertiesWriter::new(&mut buf);
       match writer.set_comment_prefix(prefix) {
         Ok(_) => panic!("Unexpectedly succeded with prefix {:?}", prefix),
@@ -1071,7 +1046,7 @@ mod tests {
       (" :=", " ! :=\n"),
       ("\u{1F41E}", " !\\u1f41e\n"),
     ];
-    for &(comment, expected) in data.iter() {
+    for &(comment, expected) in &data {
       let mut buf = Vec::new();
       {
         let mut writer = PropertiesWriter::new(&mut buf);
@@ -1093,7 +1068,7 @@ mod tests {
   fn properties_writer_good_kv_separator() {
     let separators = [":", "=", " ", " :", ": ", " =", "= ", "\x0c", "\t"];
     let mut buf = Vec::new();
-    for separator in separators.iter() {
+    for separator in &separators {
       let mut writer = PropertiesWriter::new(&mut buf);
       writer.set_kv_separator(separator).unwrap();
     }
@@ -1103,7 +1078,7 @@ mod tests {
   fn properties_writer_bad_kv_separator() {
     let separators = ["", "x", ":=", "=:", "\n", "\r"];
     let mut buf = Vec::new();
-    for separator in separators.iter() {
+    for separator in &separators {
       let mut writer = PropertiesWriter::new(&mut buf);
       match writer.set_kv_separator(separator) {
         Ok(_) => panic!("Unexpectedly succeded with separator {:?}", separator),
@@ -1125,7 +1100,7 @@ mod tests {
       ("\x0c", "x\x0cy\n"),
       ("\t", "x\ty\n")
     ];
-    for &(separator, expected) in data.iter() {
+    for &(separator, expected) in &data {
       let mut buf = Vec::new();
       {
         let mut writer = PropertiesWriter::new(&mut buf);
@@ -1150,7 +1125,7 @@ mod tests {
       (LineEnding::LF, "# foo\nx=y\n"),
       (LineEnding::CRLF, "# foo\r\nx=y\r\n"),
     ];
-    for &(line_ending, expected) in data.iter() {
+    for &(line_ending, expected) in &data {
       let mut buf = Vec::new();
       {
         let mut writer = PropertiesWriter::new(&mut buf);
@@ -1188,7 +1163,7 @@ mod tests {
       ("\n\\uxxxx", 2),
       ("a\\\nb\n\\uxxxx", 3),
     ];
-    for &(input, line_number) in data.iter() {
+    for &(input, line_number) in &data {
       let iter = PropertiesIter::new(input.as_bytes().chain(ErrorReader));
       let mut got_error = false;
       for line in iter {
