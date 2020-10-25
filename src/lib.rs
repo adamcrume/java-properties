@@ -574,17 +574,26 @@ pub struct PropertiesWriter<W: Write> {
   comment_prefix: Vec<u8>,
   kv_separator: Vec<u8>,
   line_ending: LineEnding,
+  encoding: &'static dyn Encoding,
 }
 
 impl<W: Write> PropertiesWriter<W> {
   /// Writes to the given `Write` stream.
   pub fn new(writer: W) -> Self {
+    Self::new_with_encoding(writer, ISO_8859_1)
+  }
+
+  /// Writes to the given `Write` stream in the given encoding.
+  /// Note that the Java properties specification specifies ISO-8859-1 encoding
+  /// for properties files; in most cases, `new` should be called instead.
+  pub fn new_with_encoding(writer: W, encoding: &'static dyn Encoding) -> Self {
     PropertiesWriter {
       writer,
       lines_written: 0,
       comment_prefix: vec![b'#', b' '],
       kv_separator: vec![b'='],
       line_ending: LineEnding::LF,
+      encoding,
     }
   }
 
@@ -601,7 +610,7 @@ impl<W: Write> PropertiesWriter<W> {
   pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
     self.lines_written += 1;
     self.writer.write_all(&self.comment_prefix)?;
-    match ISO_8859_1.encode(comment, UNICODE_ESCAPE) {
+    match self.encoding.encode(comment, UNICODE_ESCAPE) {
       Ok(d) => self.writer.write_all(&d)?,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
     };
@@ -628,7 +637,7 @@ impl<W: Write> PropertiesWriter<W> {
         _ => escaped.push(c), // We don't worry about other characters, since they're taken care of below.
       }
     }
-    match ISO_8859_1.encode(&escaped, UNICODE_ESCAPE) {
+    match self.encoding.encode(&escaped, UNICODE_ESCAPE) {
       Ok(d) => self.writer.write_all(&d)?,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
     };
@@ -661,7 +670,7 @@ impl<W: Write> PropertiesWriter<W> {
     if !RE.is_match(prefix) {
       return Err(PropertiesError::new(&format!("Bad comment prefix: {:?}", prefix), None, None));
     }
-    match ISO_8859_1.encode(prefix, UNICODE_ESCAPE) {
+    match self.encoding.encode(prefix, UNICODE_ESCAPE) {
       Ok(bytes) => self.comment_prefix = bytes,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
     };
@@ -679,7 +688,7 @@ impl<W: Write> PropertiesWriter<W> {
     if !RE.is_match(separator) {
       return Err(PropertiesError::new(&format!("Bad key/value separator: {:?}", separator), None, None));
     }
-    match ISO_8859_1.encode(separator, UNICODE_ESCAPE) {
+    match self.encoding.encode(separator, UNICODE_ESCAPE) {
       Ok(bytes) => self.kv_separator = bytes,
       Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
     };
@@ -980,6 +989,32 @@ mod tests {
         writer.write(key, value).unwrap();
       }
       match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
+        Ok(actual) => {
+          if expected != actual {
+            panic!("Failure while processing key {:?} and value {:?}.  Expected {:?}, but was {:?}", key, value, expected, actual);
+          }
+        },
+        Err(_) => panic!("Error decoding test output"),
+      }
+    }
+  }
+
+  #[test]
+  fn properties_writer_kv_custom_encoding() {
+    let data = [
+      ("", "", "=\n"),
+      ("a", "b", "a=b\n"),
+      (" :=", " :=", "\\ \\:\\==\\ \\:\\=\n"),
+      ("!", "#", "\\!=\\#\n"),
+      ("\u{1F41E}", "\u{1F41E}", "\u{1F41E}=\u{1F41E}\n"),
+    ];
+    for &(key, value, expected) in &data {
+      let mut buf = Vec::new();
+      {
+        let mut writer = PropertiesWriter::new_with_encoding(&mut buf, UTF_8);
+        writer.write(key, value).unwrap();
+      }
+      match UTF_8.decode(&buf, DecoderTrap::Strict) {
         Ok(actual) => {
           if expected != actual {
             panic!("Failure while processing key {:?} and value {:?}.  Expected {:?}, but was {:?}", key, value, expected, actual);
