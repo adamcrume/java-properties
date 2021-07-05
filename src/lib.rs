@@ -105,6 +105,8 @@ impl Error for PropertiesError {
     &self.description
   }
 
+  // The "readable" version is less readable, especially since it requires manual type assertions.
+  #[allow(clippy::manual_map)]
   fn source(&self) -> Option<&(dyn Error + 'static)> {
     match self.cause {
       Some(ref c) => Some(c.deref()),
@@ -324,12 +326,6 @@ impl Line {
   }
 }
 
-impl Into<LineContent> for Line {
-  fn into(self) -> LineContent {
-    self.data
-  }
-}
-
 impl Display for Line {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
     write!(f, "Line {{line_number: {}, content: {}}}", self.line_number, self.data)
@@ -348,10 +344,16 @@ pub enum LineContent {
 
 impl Display for LineContent {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    match self {
-      &LineContent::Comment(ref s) => write!(f, "Comment({:?})", s),
-      &LineContent::KVPair(ref k, ref v) => write!(f, "KVPair({:?}, {:?})", k, v),
+    match *self {
+      LineContent::Comment(ref s) => write!(f, "Comment({:?})", s),
+      LineContent::KVPair(ref k, ref v) => write!(f, "KVPair({:?}, {:?})", k, v),
     }
+  }
+}
+
+impl From<Line> for LineContent {
+  fn from(line: Line) -> LineContent {
+    line.data
   }
 }
 
@@ -440,7 +442,7 @@ lazy_static! {
     ").unwrap();
 }
 
-fn parse_line<'a>(line: &'a str) -> Option<ParsedLine<'a>> {
+fn parse_line(line: &str) -> Option<ParsedLine> {
   if let Some(c) = LINE_RE.captures(line) {
     if let Some(comment_match) = c.get(1) {
       Some(ParsedLine::Comment(comment_match.as_str()))
@@ -448,7 +450,7 @@ fn parse_line<'a>(line: &'a str) -> Option<ParsedLine<'a>> {
       let key = key_match.as_str();
       if let Some(value_match) = c.get(3) {
         Some(ParsedLine::KVPair(key, value_match.as_str()))
-      } else if key != "" {
+      } else if !key.is_empty() {
         Some(ParsedLine::KVPair(key, ""))
       } else {
         None
@@ -524,9 +526,8 @@ impl<R: Read> Iterator for PropertiesIter<R> {
   fn next(&mut self) -> Option<Self::Item> {
     loop {
       match self.lines.next() {
-        Some(Ok(LogicalLine(line_no, line))) => match parse_line(&line) {
-          Some(parsed_line) => return Some(self.parsed_line_to_line(parsed_line, line_no)),
-          None => (), // empty line, continue
+        Some(Ok(LogicalLine(line_no, line))) => if let Some(parsed_line) = parse_line(&line) {
+          return Some(self.parsed_line_to_line(parsed_line, line_no));
         },
         Some(Err(e)) => return Some(Err(e)),
         None => return None,
@@ -554,15 +555,17 @@ pub enum LineEnding {
   /// Line feed alone.
   LF,
   /// Carriage return followed by line feed.
+  // The name can't be changed without breaking backward compatibility.
+  #[allow(clippy::upper_case_acronyms)]
   CRLF,
 }
 
 impl Display for LineEnding {
   fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    f.write_str(match self {
-      &LineEnding::CR => "LineEnding::CR",
-      &LineEnding::LF => "LineEnding::LF",
-      &LineEnding::CRLF => "LineEnding::CRLF",
+    f.write_str(match *self {
+      LineEnding::CR => "LineEnding::CR",
+      LineEnding::LF => "LineEnding::LF",
+      LineEnding::CRLF => "LineEnding::CRLF",
     })
   }
 }
