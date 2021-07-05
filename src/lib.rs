@@ -81,12 +81,12 @@ use std::ops::Deref;
 #[derive(Debug)]
 pub struct PropertiesError {
   description: String,
-  cause: Option<Box<dyn Error + 'static>>,
+  cause: Option<Box<dyn Error + 'static + Send + Sync>>,
   line_number: Option<usize>,
 }
 
 impl PropertiesError {
-  fn new(description: &str, cause: Option<Box<dyn Error + 'static>>, line_number: Option<usize>) -> Self {
+  fn new(description: &str, cause: Option<Box<dyn Error + 'static + Send + Sync>>, line_number: Option<usize>) -> Self {
     PropertiesError {
       description: description.to_string(),
       cause,
