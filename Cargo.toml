@@ -13,4 +13,4 @@ edition = "2018"
 [dependencies]
 encoding = "0.2.33"
 lazy_static = "1.4.0"
-regex = "1.4.1"
+regex = "1.5.5"
