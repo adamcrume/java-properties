@@ -62,6 +62,7 @@ use encoding::RawEncoder;
 use encoding::all::ISO_8859_1;
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::From;
 use std::error::Error;
@@ -73,22 +74,67 @@ use std::io::Bytes;
 use std::io::Read;
 use std::io::Write;
 use std::iter::Peekable;
+use std::num::ParseIntError;
 use std::ops::Deref;
+use thiserror::Error;
 
 /////////////////////
 
 /// The error type for reading and writing properties files.
-#[derive(Debug)]
+#[derive(Debug, Error)]
+#[error("{cause} (line_number = {})", self.display_line_number())]
 pub struct PropertiesError {
-  description: String,
-  cause: Option<Box<dyn Error + 'static + Send + Sync>>,
+  #[source]
+  cause: PropertiesErrorCause,
   line_number: Option<usize>,
 }
 
+/// Underlying errors for [`PropertiesError`]
+#[non_exhaustive]
+#[derive(Debug, Error)]
+pub enum PropertiesErrorCause {
+  #[error("I/O error")]
+  IOError(#[from] io::Error),
+  #[error(transparent)]
+  EncodingError(#[from] EncodingError),
+  #[error("Malformed \\uxxxx encoding")]
+  UnicodeEscapeError(#[from] UnicodeEscapeError),
+  #[error("Bad key/value separator: {0:?}")]
+  BadKeyValueSeparator(String),
+  #[error("Bad comment prefix: {0:?}")]
+  BadCommentPrefix(String),
+}
+
+/// Errors for escaping unicode code point sequences.
+#[non_exhaustive]
+#[derive(Debug, Error)]
+pub enum UnicodeEscapeError {
+  #[error("Not enough digits")]
+  NotEnoughDigits,
+  #[error("Not hex")]
+  NotHex(#[from] ParseIntError),
+  #[error("Invalid character code ({0:X?})")]
+  InvalidCharacter(u16),
+}
+
+/// Opaque wrapper for encoding errors
+#[non_exhaustive]
+#[derive(Debug, Error)]
+#[error("Error reading {name} encoding: {err}")]
+pub struct EncodingError {
+    name: &'static str,
+    err: Cow<'static, str>,
+}
+
+impl EncodingError {
+  fn new(encoding: &dyn Encoding, err: Cow<'static, str>) -> Self {
+    Self { name: encoding.name(), err }
+  }
+}
+
 impl PropertiesError {
-  fn new(description: &str, cause: Option<Box<dyn Error + 'static + Send + Sync>>, line_number: Option<usize>) -> Self {
+  fn new(cause: PropertiesErrorCause, line_number: Option<usize>) -> Self {
     PropertiesError {
-      description: description.to_string(),
       cause,
       line_number,
     }
@@ -98,36 +144,15 @@ impl PropertiesError {
   pub fn line_number(&self) -> Option<usize> {
     self.line_number
   }
-}
 
-impl Error for PropertiesError {
-  fn description(&self) -> &str {
-    &self.description
-  }
-
-  // The "readable" version is less readable, especially since it requires manual type assertions.
-  #[allow(clippy::manual_map)]
-  fn source(&self) -> Option<&(dyn Error + 'static)> {
-    match self.cause {
-      Some(ref c) => Some(c.deref()),
-      None => None,
-    }
+  fn display_line_number(&self) -> String {
+    self.line_number.map(|x| x.to_string()).unwrap_or("unknown".to_string())
   }
 }
 
 impl From<io::Error> for PropertiesError {
   fn from(e: io::Error) -> Self {
-    PropertiesError::new("I/O error", Some(Box::new(e)), None)
-  }
-}
-
-impl Display for PropertiesError {
-  fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-    write!(f, "{}", &self.description)?;
-    match self.line_number {
-      Some(n) => write!(f, " (line_number = {})", n),
-      None => write!(f, " (line_number = unknown)"),
-    }
+    PropertiesError::new(e.into(), None)
   }
 }
 
@@ -157,7 +182,7 @@ impl<R: Read> NaturalLines<R> {
   fn decode(&self, buf: &[u8]) -> Result<NaturalLine, PropertiesError> {
     match self.encoding.decode(buf, DecoderTrap::Strict) {
       Ok(s) => Ok(NaturalLine(self.line_count, s)),
-      Err(e) => Err(PropertiesError::new(&format!("Error reading {} encoding: {}", self.encoding.name(), e), None, Some(self.line_count))),
+      Err(e) => Err(PropertiesError::new(EncodingError::new(self.encoding, e).into(), Some(self.line_count))),
     }
   }
 }
@@ -187,7 +212,7 @@ impl<R: Read> Iterator for NaturalLines<R> {
             return Some(self.decode(&buf));
         },
         Some(Ok(b)) => buf.push(b),
-        Some(Err(e)) => return Some(Err(PropertiesError::new("I/O error", Some(Box::new(e)), Some(self.line_count + 1)))),
+        Some(Err(e)) => return Some(Err(PropertiesError::new(e.into(), Some(self.line_count + 1)))),
         None => {
           self.eof = true;
           self.line_count += 1;
@@ -379,16 +404,16 @@ fn unescape(s: &str, line_number: usize) -> Result<String, PropertiesError> {
                 for _ in 0..4 {
                   match iter.next() {
                     Some(c) => tmp.push(c),
-                    None => return Err(PropertiesError::new("Malformed \\uxxxx encoding: not enough digits.", None, Some(line_number))),
+                    None => return Err(PropertiesError::new(UnicodeEscapeError::NotEnoughDigits.into(),  Some(line_number))),
                   }
                 }
                 let val = match u16::from_str_radix(&tmp, 16) {
                   Ok(x) => x,
-                  Err(e) => return Err(PropertiesError::new("Malformed \\uxxxx encoding: not hex.", Some(Box::new(e)), Some(line_number))),
+                  Err(e) => return Err(PropertiesError::new(UnicodeEscapeError::from(e).into(), Some(line_number))),
                 };
                 match std::char::from_u32(val as u32) {
                   Some(c) => buf.push(c),
-                  None => return Err(PropertiesError::new("Malformed \\uxxxx encoding: invalid character.", None, Some(line_number))),
+                  None => return Err(PropertiesError::new(UnicodeEscapeError::InvalidCharacter(val).into(), Some(line_number))),
                 }
               },
               _ => buf.push(c),
@@ -615,7 +640,7 @@ impl<W: Write> PropertiesWriter<W> {
     self.writer.write_all(&self.comment_prefix)?;
     match self.encoding.encode(comment, UNICODE_ESCAPE) {
       Ok(d) => self.writer.write_all(&d)?,
-      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
+      Err(e) => return Err(PropertiesError::new(EncodingError::new(self.encoding, e).into(), Some(self.lines_written))),
     };
     self.write_eol()?;
     Ok(())
@@ -642,7 +667,7 @@ impl<W: Write> PropertiesWriter<W> {
     }
     match self.encoding.encode(&escaped, UNICODE_ESCAPE) {
       Ok(d) => self.writer.write_all(&d)?,
-      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
+      Err(e) => return Err(PropertiesError::new(EncodingError::new(self.encoding, e).into(), Some(self.lines_written))),
     };
     Ok(())
   }
@@ -671,11 +696,11 @@ impl<W: Write> PropertiesWriter<W> {
       static ref RE: Regex = Regex::new(r"^[ \t\x0c]*[#!][^\r\n]*$").unwrap();
     }
     if !RE.is_match(prefix) {
-      return Err(PropertiesError::new(&format!("Bad comment prefix: {:?}", prefix), None, None));
+      return Err(PropertiesError::new(PropertiesErrorCause::BadCommentPrefix(prefix.into()), None));
     }
     match self.encoding.encode(prefix, UNICODE_ESCAPE) {
       Ok(bytes) => self.comment_prefix = bytes,
-      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
+      Err(e) => return Err(PropertiesError::new(EncodingError::new(self.encoding, e).into(), None)),
     };
     Ok(())
   }
@@ -689,11 +714,11 @@ impl<W: Write> PropertiesWriter<W> {
       static ref RE: Regex = Regex::new(r"^([ \t\x0c]*[:=][ \t\x0c]*|[ \t\x0c]+)$").unwrap();
     }
     if !RE.is_match(separator) {
-      return Err(PropertiesError::new(&format!("Bad key/value separator: {:?}", separator), None, None));
+      return Err(PropertiesError::new(PropertiesErrorCause::BadKeyValueSeparator(separator.into()), None));
     }
     match self.encoding.encode(separator, UNICODE_ESCAPE) {
       Ok(bytes) => self.kv_separator = bytes,
-      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
+      Err(e) => return Err(PropertiesError::new(EncodingError::new(self.encoding, e).into(), None)),
     };
     Ok(())
   }
@@ -1217,8 +1242,8 @@ mod tests {
 
   #[test]
   fn properties_error_display() {
-    assert_eq!(format!("{}", PropertiesError::new("foo", None, None)), "foo (line_number = unknown)");
-    assert_eq!(format!("{}", PropertiesError::new("foo", None, Some(1))), "foo (line_number = 1)");
+    assert_eq!(PropertiesError::new(crate::PropertiesErrorCause::BadCommentPrefix("".into()), None).to_string(), "Bad comment prefix: \"\" (line_number = unknown)");
+    assert_eq!(PropertiesError::new(crate::PropertiesErrorCause::BadCommentPrefix("".into()), Some(1)).to_string(), "Bad comment prefix: \"\" (line_number = 1)");
   }
 
   #[test]
