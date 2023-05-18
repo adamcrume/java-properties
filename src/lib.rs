@@ -36,7 +36,7 @@
 //! for (k, v) in &src_map2 {
 //!   writer.write(&k, &v)?;
 //! }
-//! writer.flush();
+//! writer.finish();
 //!
 //! // Reading simple
 //! let mut f2 = File::open(&file_name)?;
@@ -54,12 +54,10 @@
 //! # }
 //! ```
 
-use encoding::ByteWriter;
-use encoding::EncoderTrap;
-use encoding::Encoding;
-use encoding::DecoderTrap;
-use encoding::RawEncoder;
-use encoding::all::ISO_8859_1;
+use encoding_rs::Encoder;
+use encoding_rs::EncoderResult;
+use encoding_rs::Encoding;
+use encoding_rs::WINDOWS_1252;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
@@ -86,9 +84,9 @@ pub struct PropertiesError {
 }
 
 impl PropertiesError {
-  fn new(description: &str, cause: Option<Box<dyn Error + 'static + Send + Sync>>, line_number: Option<usize>) -> Self {
+  fn new<S: Into<String>>(description: S, cause: Option<Box<dyn Error + 'static + Send + Sync>>, line_number: Option<usize>) -> Self {
     PropertiesError {
-      description: description.to_string(),
+      description: description.into(),
       cause,
       line_number,
     }
@@ -141,11 +139,11 @@ struct NaturalLines<R: Read> {
   bytes: Peekable<Bytes<R>>,
   eof: bool,
   line_count: usize,
-  encoding: &'static dyn Encoding,
+  encoding: &'static Encoding,
 }
 
 impl<R: Read> NaturalLines<R> {
-  fn new(reader: R, encoding: &'static dyn Encoding) -> Self {
+  fn new(reader: R, encoding: &'static Encoding) -> Self {
     NaturalLines {
       bytes: reader.bytes().peekable(),
       eof: false,
@@ -155,10 +153,8 @@ impl<R: Read> NaturalLines<R> {
   }
 
   fn decode(&self, buf: &[u8]) -> Result<NaturalLine, PropertiesError> {
-    match self.encoding.decode(buf, DecoderTrap::Strict) {
-      Ok(s) => Ok(NaturalLine(self.line_count, s)),
-      Err(e) => Err(PropertiesError::new(&format!("Error reading {} encoding: {}", self.encoding.name(), e), None, Some(self.line_count))),
-    }
+    let (content, _, _) = self.encoding.decode(buf);
+    Ok(NaturalLine(self.line_count, content.into_owned()))
   }
 }
 
@@ -475,13 +471,14 @@ pub struct PropertiesIter<R: Read> {
 impl<R: Read> PropertiesIter<R> {
   /// Parses properties from the given `Read` stream.
   pub fn new(input: R) -> Self {
-    Self::new_with_encoding(input, ISO_8859_1)
+    Self::new_with_encoding(input, WINDOWS_1252)
   }
 
   /// Parses properties from the given `Read` stream in the given encoding.
   /// Note that the Java properties specification specifies ISO-8859-1 encoding
-  /// for properties files; in most cases, `new` should be called instead.
-  pub fn new_with_encoding(input: R, encoding: &'static dyn Encoding) -> Self {
+  /// (a.k.a. windows-1252) for properties files; in most cases, `new` should be
+  /// called instead.
+  pub fn new_with_encoding(input: R, encoding: &'static Encoding) -> Self {
     PropertiesIter {
       lines: LogicalLines::new(NaturalLines::new(input, encoding)),
     }
@@ -538,15 +535,6 @@ impl<R: Read> Iterator for PropertiesIter<R> {
 
 /////////////////////
 
-fn unicode_escape(_encoder: &mut dyn RawEncoder, input: &str, output: &mut dyn ByteWriter) -> bool {
-  let escapes: Vec<String> = input.chars().map(|ch| format!("\\u{:x}", ch as isize)).collect();
-  let escapes = escapes.concat();
-  output.write_bytes(escapes.as_bytes());
-  true
-}
-
-static UNICODE_ESCAPE: EncoderTrap = EncoderTrap::Call(unicode_escape);
-
 /// A line ending style allowed in a Java properties file.
 #[derive(PartialEq,Eq,PartialOrd,Ord,Debug,Copy,Clone,Hash)]
 pub enum LineEnding {
@@ -570,59 +558,122 @@ impl Display for LineEnding {
   }
 }
 
-/// Writes to a properties file.
-pub struct PropertiesWriter<W: Write> {
+struct EncodingWriter<W: Write> {
   writer: W,
   lines_written: usize,
-  comment_prefix: Vec<u8>,
-  kv_separator: Vec<u8>,
+  encoder: Encoder,
+  buffer: Vec<u8>,
+}
+
+impl<W: Write> EncodingWriter<W> {
+  fn write(&mut self, mut data: &str) -> Result<(), PropertiesError> {
+    while !data.is_empty() {
+      let (result, bytes_read) = self.encoder.encode_from_utf8_to_vec_without_replacement(data, &mut self.buffer, false);
+      data = &data[bytes_read..];
+      match result {
+        EncoderResult::InputEmpty => (),
+        EncoderResult::OutputFull => {
+          // encoding_rs won't just append to vectors if it would require allocation.
+          self.buffer.reserve(self.buffer.capacity() * 2);
+        },
+        EncoderResult::Unmappable(c) => {
+          let escaped = format!("\\u{:x}", c as isize);
+          let (result2, _) = self.encoder.encode_from_utf8_to_vec_without_replacement(&escaped, &mut self.buffer, false);
+          match result2 {
+            EncoderResult::InputEmpty => (),
+            EncoderResult::OutputFull => {
+              // encoding_rs won't just append to vectors if it would require allocation.
+              self.buffer.reserve(self.buffer.capacity() * 2);
+            },
+            EncoderResult::Unmappable(_) => return Err(PropertiesError::new(format!("Encoding error: unable to write UTF-8 escaping {:?} for {:?}", escaped, c), None, Some(self.lines_written))),
+          }
+        },
+      }
+    }
+    self.flush_buffer()?;
+    Ok(())
+  }
+
+  fn flush_buffer(&mut self) -> Result<(), PropertiesError> {
+    self.writer
+      .write_all(&self.buffer)
+      .map_err(|e| PropertiesError::new("I/O error", Some(Box::new(e)), Some(self.lines_written)))?;
+    self.buffer.clear();
+    Ok(())
+  }
+
+  fn flush(&mut self) -> Result<(), PropertiesError> {
+    self.flush_buffer()?;
+    self.writer.flush()?;
+    Ok(())
+  }
+
+  fn finish(&mut self) -> Result<(), PropertiesError> {
+    let (result, _) = self.encoder.encode_from_utf8_to_vec_without_replacement("", &mut self.buffer, true);
+    match result {
+      EncoderResult::InputEmpty => (),
+      EncoderResult::OutputFull => return Err(PropertiesError::new("Encoding error: output full", None, Some(self.lines_written))),
+      EncoderResult::Unmappable(c) => return Err(PropertiesError::new(format!("Encoding error: unmappable character {:?}", c), None, Some(self.lines_written)))
+    }
+    self.flush()?;
+    Ok(())
+  }
+}
+
+/// Writes to a properties file.
+///
+/// `finish()` *must* be called after writing all data.
+pub struct PropertiesWriter<W: Write> {
+  comment_prefix: String,
+  kv_separator: String,
   line_ending: LineEnding,
-  encoding: &'static dyn Encoding,
+  writer: EncodingWriter<W>,
 }
 
 impl<W: Write> PropertiesWriter<W> {
   /// Writes to the given `Write` stream.
   pub fn new(writer: W) -> Self {
-    Self::new_with_encoding(writer, ISO_8859_1)
+    Self::new_with_encoding(writer, WINDOWS_1252)
   }
 
   /// Writes to the given `Write` stream in the given encoding.
   /// Note that the Java properties specification specifies ISO-8859-1 encoding
   /// for properties files; in most cases, `new` should be called instead.
-  pub fn new_with_encoding(writer: W, encoding: &'static dyn Encoding) -> Self {
+  pub fn new_with_encoding(writer: W, encoding: &'static Encoding) -> Self {
     PropertiesWriter {
-      writer,
-      lines_written: 0,
-      comment_prefix: vec![b'#', b' '],
-      kv_separator: vec![b'='],
+      comment_prefix: "# ".to_string(),
+      kv_separator: "=".to_string(),
       line_ending: LineEnding::LF,
-      encoding,
+      writer: EncodingWriter {
+        writer,
+        lines_written: 0,
+        encoder: encoding.new_encoder(),
+        // It's important that we start with a non-zero capacity, since we double it as needed.
+        buffer: Vec::with_capacity(256),
+      },
     }
   }
 
   fn write_eol(&mut self) -> Result<(), PropertiesError> {
-    self.writer.write_all(match self.line_ending {
-      LineEnding::CR => &[b'\r'],
-      LineEnding::LF => &[b'\n'],
-      LineEnding::CRLF => &[b'\r', b'\n'],
+    self.writer.write(match self.line_ending {
+      LineEnding::CR => "\r",
+      LineEnding::LF => "\n",
+      LineEnding::CRLF => "\r\n",
     })?;
     Ok(())
   }
 
   /// Writes a comment to the file.
   pub fn write_comment(&mut self, comment: &str) -> Result<(), PropertiesError> {
-    self.lines_written += 1;
-    self.writer.write_all(&self.comment_prefix)?;
-    match self.encoding.encode(comment, UNICODE_ESCAPE) {
-      Ok(d) => self.writer.write_all(&d)?,
-      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
-    };
+    self.writer.lines_written += 1;
+    self.writer.write(&self.comment_prefix)?;
+    self.writer.write(comment)?;
     self.write_eol()?;
     Ok(())
   }
 
   fn write_escaped(&mut self, s: &str) -> Result<(), PropertiesError> {
-    self.lines_written += 1;
+    self.writer.lines_written += 1;
     let mut escaped = String::new();
     for c in s.chars() {
       match c {
@@ -640,17 +691,14 @@ impl<W: Write> PropertiesWriter<W> {
         _ => escaped.push(c), // We don't worry about other characters, since they're taken care of below.
       }
     }
-    match self.encoding.encode(&escaped, UNICODE_ESCAPE) {
-      Ok(d) => self.writer.write_all(&d)?,
-      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, Some(self.lines_written))),
-    };
+    self.writer.write(&escaped)?;
     Ok(())
   }
 
   /// Writes a key/value pair to the file.
   pub fn write(&mut self, key: &str, value: &str) -> Result<(), PropertiesError> {
     self.write_escaped(key)?;
-    self.writer.write_all(&self.kv_separator)?;
+    self.writer.write(&self.kv_separator)?;
     self.write_escaped(value)?;
     self.write_eol()?;
     Ok(())
@@ -673,10 +721,7 @@ impl<W: Write> PropertiesWriter<W> {
     if !RE.is_match(prefix) {
       return Err(PropertiesError::new(&format!("Bad comment prefix: {:?}", prefix), None, None));
     }
-    match self.encoding.encode(prefix, UNICODE_ESCAPE) {
-      Ok(bytes) => self.comment_prefix = bytes,
-      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
-    };
+    self.comment_prefix = prefix.to_string();
     Ok(())
   }
 
@@ -691,16 +736,19 @@ impl<W: Write> PropertiesWriter<W> {
     if !RE.is_match(separator) {
       return Err(PropertiesError::new(&format!("Bad key/value separator: {:?}", separator), None, None));
     }
-    match self.encoding.encode(separator, UNICODE_ESCAPE) {
-      Ok(bytes) => self.kv_separator = bytes,
-      Err(e) => return Err(PropertiesError::new(&format!("Encoding error: {}", e), None, None)),
-    };
+    self.kv_separator = separator.to_string();
     Ok(())
   }
 
   /// Sets the line ending.
   pub fn set_line_ending(&mut self, line_ending: LineEnding) {
     self.line_ending = line_ending;
+  }
+
+  /// Finishes the encoding.
+  pub fn finish(&mut self) -> Result<(), PropertiesError> {
+    self.writer.finish()?;
+    Ok(())
   }
 }
 
@@ -714,7 +762,7 @@ pub fn write<W: Write>(writer: W, map: &HashMap<String, String>) -> Result<(), P
   for (k, v) in map {
     writer.write(&k, &v)?;
   }
-  writer.flush()?;
+  writer.finish()?;
   Ok(())
 }
 
@@ -734,9 +782,8 @@ pub fn read<R: Read>(input: R) -> Result<HashMap<String, String>, PropertiesErro
 
 #[cfg(test)]
 mod tests {
-  use encoding::all::{ISO_8859_1, UTF_8};
-  use encoding::DecoderTrap;
-  use encoding::Encoding;
+  use encoding_rs::UTF_8;
+  use encoding_rs::WINDOWS_1252;
   use std::io;
   use std::io::ErrorKind;
   use std::io::Read;
@@ -775,7 +822,7 @@ mod tests {
     ];
     for &(ref bytes, ref lines) in &data {
       let reader = &bytes as &[u8];
-      let mut iter = NaturalLines::new(reader, ISO_8859_1);
+      let mut iter = NaturalLines::new(reader, WINDOWS_1252);
       let mut count = 1;
       for line in lines {
         match (line.to_string(), iter.next()) {
@@ -932,7 +979,7 @@ mod tests {
       Line::mk_pair(line_no, key.to_string(), value.to_string())
     }
     let data = vec![
-      (ISO_8859_1 as &dyn Encoding,
+      (WINDOWS_1252,
       vec![
       ("", vec![]),
       ("a=b", vec![mk_pair(1, "a", "b")]),
@@ -950,7 +997,7 @@ mod tests {
       ("a = b\\\n  c, d ", vec![mk_pair(1, "a", "bc, d ")]),
       ("x=\\\\\\\nty", vec![mk_pair(1, "x", "\\ty")]),
     ]),
-    (UTF_8 as &dyn Encoding,
+    (UTF_8,
     vec![
       ("a=日本語\nb=Français", vec![
         mk_pair(1, "a", "日本語"),
@@ -990,14 +1037,11 @@ mod tests {
       {
         let mut writer = PropertiesWriter::new(&mut buf);
         writer.write(key, value).unwrap();
+        writer.finish().unwrap();
       }
-      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
-        Ok(actual) => {
-          if expected != actual {
-            panic!("Failure while processing key {:?} and value {:?}.  Expected {:?}, but was {:?}", key, value, expected, actual);
-          }
-        },
-        Err(_) => panic!("Error decoding test output"),
+      let actual = WINDOWS_1252.decode(&buf).0;
+      if expected != actual {
+        panic!("Failure while processing key {:?} and value {:?}.  Expected {:?}, but was {:?}", key, value, expected, actual);
       }
     }
   }
@@ -1016,14 +1060,11 @@ mod tests {
       {
         let mut writer = PropertiesWriter::new_with_encoding(&mut buf, UTF_8);
         writer.write(key, value).unwrap();
+        writer.finish().unwrap();
       }
-      match UTF_8.decode(&buf, DecoderTrap::Strict) {
-        Ok(actual) => {
-          if expected != actual {
-            panic!("Failure while processing key {:?} and value {:?}.  Expected {:?}, but was {:?}", key, value, expected, actual);
-          }
-        },
-        Err(_) => panic!("Error decoding test output"),
+      let actual = UTF_8.decode(&buf).0;
+      if expected != actual {
+        panic!("Failure while processing key {:?} and value {:?}.  Expected {:?}, but was {:?}", key, value, expected, actual);
       }
     }
   }
@@ -1041,14 +1082,11 @@ mod tests {
       {
         let mut writer = PropertiesWriter::new(&mut buf);
         writer.write_comment(comment).unwrap();
+        writer.finish().unwrap();
       }
-      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
-        Ok(actual) => {
-          if expected != actual {
-            panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", comment, expected, actual);
-          }
-        },
-        Err(_) => panic!("Error decoding test output"),
+      let actual = UTF_8.decode(&buf).0;
+      if expected != actual {
+        panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", comment, expected, actual);
       }
     }
   }
@@ -1090,14 +1128,11 @@ mod tests {
         let mut writer = PropertiesWriter::new(&mut buf);
         writer.set_comment_prefix(" !").unwrap();
         writer.write_comment(comment).unwrap();
+        writer.finish().unwrap();
       }
-      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
-        Ok(actual) => {
-          if expected != actual {
-            panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", comment, expected, actual);
-          }
-        },
-        Err(_) => panic!("Error decoding test output"),
+      let actual = WINDOWS_1252.decode(&buf).0;
+      if expected != actual {
+        panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", comment, expected, actual);
       }
     }
   }
@@ -1144,14 +1179,11 @@ mod tests {
         let mut writer = PropertiesWriter::new(&mut buf);
         writer.set_kv_separator(separator).unwrap();
         writer.write("x", "y").unwrap();
+        writer.finish().unwrap();
       }
-      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
-        Ok(actual) => {
-          if expected != actual {
-            panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", separator, expected, actual);
-          }
-        },
-        Err(_) => panic!("Error decoding test output"),
+      let actual = WINDOWS_1252.decode(&buf).0;
+      if expected != actual {
+        panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", separator, expected, actual);
       }
     }
   }
@@ -1170,14 +1202,11 @@ mod tests {
         writer.set_line_ending(line_ending);
         writer.write_comment("foo").unwrap();
         writer.write("x", "y").unwrap();
+        writer.finish().unwrap();
       }
-      match ISO_8859_1.decode(&buf, DecoderTrap::Strict) {
-        Ok(actual) => {
-          if expected != actual {
-            panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", line_ending, expected, actual);
-          }
-        },
-        Err(_) => panic!("Error decoding test output"),
+      let actual = WINDOWS_1252.decode(&buf).0;
+      if expected != actual {
+        panic!("Failure while processing {:?}.  Expected {:?}, but was {:?}", line_ending, expected, actual);
       }
     }
   }

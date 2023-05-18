@@ -11,6 +11,6 @@ documentation = "https://adamcrume.github.io/java-properties"
 edition = "2018"
 
 [dependencies]
-encoding = "0.2.33"
+encoding_rs = "0.8.32"
 lazy_static = "1.4.0"
 regex = "1.5.5"
