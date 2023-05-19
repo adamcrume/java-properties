@@ -54,6 +54,8 @@
 //! # }
 //! ```
 
+use encoding_rs::CoderResult;
+use encoding_rs::Decoder;
 use encoding_rs::Encoder;
 use encoding_rs::EncoderResult;
 use encoding_rs::Encoding;
@@ -61,13 +63,13 @@ use encoding_rs::WINDOWS_1252;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::convert::From;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Display;
 use std::fmt::Formatter;
 use std::io;
-use std::io::Bytes;
 use std::io::Read;
 use std::io::Write;
 use std::iter::Peekable;
@@ -131,35 +133,94 @@ impl Display for PropertiesError {
 
 /////////////////////
 
+struct DecodeIter<R: Read> {
+  decoder: Decoder,
+  reader: R,
+  input_buffer: Vec<u8>,
+  output_buffer: String,
+  chars: VecDeque<char>,
+}
+
+impl<R: Read> DecodeIter<R> {
+  fn new(reader: R, encoding: &'static Encoding) -> Self {
+    Self {
+      decoder: encoding.new_decoder(),
+      reader,
+      // must have a non-zero capacity since we double it as needed
+      input_buffer: Vec::with_capacity(64),
+      // must have a non-zero capacity since we double it as needed
+      output_buffer: String::with_capacity(64),
+      chars: VecDeque::new(),
+    }
+  }
+}
+
+impl<R: Read> Iterator for DecodeIter<R> {
+  type Item = Result<char, io::Error>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    loop {
+      if let Some(c) = self.chars.pop_front() {
+        return Some(Ok(c));
+      }
+      let reader_eof = if self.input_buffer.is_empty() {
+        self.input_buffer.resize(self.input_buffer.capacity(), 0);
+        let bytes_read = match self.reader.read(&mut self.input_buffer) {
+          Ok(x) => x,
+          Err(e) => {
+            self.input_buffer.clear();
+            return Some(Err(e));
+          },
+        };
+        self.input_buffer.truncate(bytes_read);
+        bytes_read == 0
+      } else {
+        false
+      };
+      let (result, bytes_read, _) = self.decoder.decode_to_string(
+        &self.input_buffer,
+        &mut self.output_buffer,
+        reader_eof,
+      );
+      self.input_buffer.drain(..bytes_read);
+      match result {
+        CoderResult::InputEmpty => (),
+        CoderResult::OutputFull => {
+          self.output_buffer.reserve(self.output_buffer.capacity());
+        },
+      };
+      self.chars.extend(self.output_buffer.drain(..));
+      if self.chars.is_empty() && reader_eof {
+        return None;
+      }
+    }
+  }
+}
+
+/////////////////////
+
 #[derive(PartialEq,Eq,Debug)]
 struct NaturalLine(usize, String);
 
 // We can't use BufRead.lines() because it doesn't use the proper line endings
 struct NaturalLines<R: Read> {
-  bytes: Peekable<Bytes<R>>,
+  chars: Peekable<DecodeIter<R>>,
   eof: bool,
   line_count: usize,
-  encoding: &'static Encoding,
 }
 
 impl<R: Read> NaturalLines<R> {
   fn new(reader: R, encoding: &'static Encoding) -> Self {
     NaturalLines {
-      bytes: reader.bytes().peekable(),
+      chars: DecodeIter::new(reader, encoding).peekable(),
       eof: false,
       line_count: 0,
-      encoding,
     }
-  }
-
-  fn decode(&self, buf: &[u8]) -> Result<NaturalLine, PropertiesError> {
-    let (content, _, _) = self.encoding.decode(buf);
-    Ok(NaturalLine(self.line_count, content.into_owned()))
   }
 }
 
-const LF: u8 = b'\n';
-const CR: u8 = b'\r';
+const LF: char = '\n';
+const CR: char = '\r';
 
 impl<R: Read> Iterator for NaturalLines<R> {
   type Item = Result<NaturalLine, PropertiesError>;
@@ -168,26 +229,26 @@ impl<R: Read> Iterator for NaturalLines<R> {
     if self.eof {
       return None;
     }
-    let mut buf = Vec::new();
+    let mut buf = String::new();
     loop {
-      match self.bytes.next() {
+      match self.chars.next() {
         Some(Ok(CR)) => {
-            if let Some(&Ok(LF)) = self.bytes.peek() {
-              self.bytes.next();
-            }
-            self.line_count += 1;
-            return Some(self.decode(&buf));
+          if let Some(&Ok(LF)) = self.chars.peek() {
+            self.chars.next();
+          }
+          self.line_count += 1;
+          return Some(Ok(NaturalLine(self.line_count, buf)));
         },
         Some(Ok(LF)) => {
-            self.line_count += 1;
-            return Some(self.decode(&buf));
+          self.line_count += 1;
+          return Some(Ok(NaturalLine(self.line_count, buf)));
         },
-        Some(Ok(b)) => buf.push(b),
+        Some(Ok(c)) => buf.push(c),
         Some(Err(e)) => return Some(Err(PropertiesError::new("I/O error", Some(Box::new(e)), Some(self.line_count + 1)))),
         None => {
           self.eof = true;
           self.line_count += 1;
-          return Some(self.decode(&buf));
+          return Some(Ok(NaturalLine(self.line_count, buf)));
         },
       }
     }
@@ -787,8 +848,6 @@ mod tests {
   use std::io;
   use std::io::ErrorKind;
   use std::io::Read;
-  use super::CR;
-  use super::LF;
   use super::Line;
   use super::LineEnding;
   use super::LogicalLine;
@@ -800,6 +859,8 @@ mod tests {
   use super::PropertiesIter;
   use super::PropertiesWriter;
 
+  const LF: u8 = b'\n';
+  const CR: u8 = b'\r';
   const SP: u8 = b' '; // space
 
   #[test]
