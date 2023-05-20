@@ -1,7 +1,7 @@
 // -*-  indent-tabs-mode:nil; tab-width:4;  -*-
 //! Utilities for reading and writing Java properties files
 //!
-//! The specification is taken from https://docs.oracle.com/javase/7/docs/api/java/util/Properties.html.
+//! The specification is taken from <https://docs.oracle.com/javase/7/docs/api/java/util/Properties.html>.
 //! Where the documentation is ambiguous or incomplete, behavior is based on the behavior of java.util.Properties.
 //!
 //! # Examples
@@ -902,7 +902,7 @@ impl<W: Write> PropertiesWriter<W> {
 pub fn write<W: Write>(writer: W, map: &HashMap<String, String>) -> Result<(), PropertiesError> {
     let mut writer = PropertiesWriter::new(writer);
     for (k, v) in map {
-        writer.write(&k, &v)?;
+        writer.write(k, v)?;
     }
     writer.finish()?;
     Ok(())
