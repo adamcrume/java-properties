@@ -1,0 +1,4 @@
+#!/bin/bash
+
+mydir="$(dirname "$(readlink -f "$0")")"
+ln -s ../../git-hooks/pre-commit "$mydir"/.git/hooks/pre-commit
