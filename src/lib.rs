@@ -54,6 +54,16 @@
 //! # }
 //! ```
 
+#![deny(rustdoc::broken_intra_doc_links)]
+#![deny(rustdoc::invalid_codeblock_attributes)]
+#![deny(rustdoc::invalid_rust_codeblocks)]
+#![deny(rustdoc::private_intra_doc_links)]
+#![deny(unused_must_use)]
+#![doc(test(attr(allow(unused_extern_crates))))]
+#![doc(test(attr(deny(unused_must_use))))]
+#![doc(test(attr(warn(unused))))]
+#![warn(missing_docs)]
+
 use encoding_rs::CoderResult;
 use encoding_rs::Decoder;
 use encoding_rs::Encoder;
