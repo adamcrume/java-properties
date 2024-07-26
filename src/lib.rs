@@ -71,7 +71,10 @@ use encoding_rs::EncoderResult;
 use encoding_rs::Encoding;
 use encoding_rs::WINDOWS_1252;
 use lazy_static::lazy_static;
+#[cfg(feature = "unicode")]
 use regex::Regex;
+#[cfg(not(feature = "unicode"))]
+use regex_lite::Regex;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::convert::From;
